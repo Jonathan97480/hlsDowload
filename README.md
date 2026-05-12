@@ -8,6 +8,7 @@ Le projet inclut:
 - Interface admin (`/admin`) avec dashboard temps reel
 - Extension Chrome (`chrome-extension/`)
 - Persistance SQLite (`data/app.db`) pour admin/sessions/settings/jobs/historique
+- Pipeline de telechargement robuste avec fallback auto en transcodage si le flux HLS est instable
 
 ## Prerequis
 
@@ -178,6 +179,21 @@ Important Docker:
 - Si `FFMPEG_PATH` est defini, verifier qu'il pointe vers un chemin valide dans le conteneur.
 
 ## API
+
+## Robustesse des telechargements
+
+Le moteur de download utilise maintenant une strategie hybride:
+
+- tentative initiale rapide en copie directe (`-c copy`)
+- verification du MP4 produit via `ffprobe`
+- verification de decodage sur les premieres minutes du fichier
+- bascule automatique en transcodage robuste (`libx264` + `aac`) si le fichier est detecte comme corrompu ou instable
+
+Ce mecanisme reduit les cas ou:
+
+- l'image se fige mais le son continue
+- des artefacts ou traits colores apparaissent
+- certains segments HLS instables rendent le MP4 final illisible
 
 ### `POST /api/download`
 

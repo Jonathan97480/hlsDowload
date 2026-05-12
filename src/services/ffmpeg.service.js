@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 const ffmpeg = require("fluent-ffmpeg");
 const { v4: uuidv4 } = require("uuid");
 const { getBestHlsUrl } = require("./hls-quality.service");
@@ -57,6 +58,16 @@ function createSafeOutputName(downloadsDir, preferredName = "") {
 function buildInputOptions(headers) {
     const options = [];
 
+    // Improve resilience against temporary CDN/network instability.
+    options.push("-rw_timeout");
+    options.push("15000000");
+    options.push("-reconnect");
+    options.push("1");
+    options.push("-reconnect_streamed");
+    options.push("1");
+    options.push("-reconnect_delay_max");
+    options.push("10");
+
     if (headers?.referer) {
         options.push("-referer");
         options.push(headers.referer);
@@ -73,6 +84,118 @@ function buildInputOptions(headers) {
     }
 
     return options;
+}
+
+function runFfmpegConvert(finalUrl, inputOptions, outputPath, hooks, mode) {
+    const isTranscode = mode === "transcode";
+
+    return new Promise((resolve, reject) => {
+        const command = ffmpeg(finalUrl);
+
+        if (inputOptions.length > 0) {
+            command.inputOptions(inputOptions);
+        }
+
+        const outputOptions = isTranscode
+            ? [
+                "-c:v libx264",
+                "-preset veryfast",
+                "-crf 22",
+                "-pix_fmt yuv420p",
+                "-c:a aac",
+                "-b:a 128k",
+                "-movflags +faststart"
+            ]
+            : [
+                "-c copy",
+                "-bsf:a aac_adtstoasc",
+                "-movflags +faststart"
+            ];
+
+        command
+            .outputOptions(outputOptions)
+            .format("mp4")
+            .on("start", () => {
+                console.log(`[ffmpeg] FFmpeg demarree (${mode})`);
+                if (typeof hooks.onStart === "function") {
+                    hooks.onStart();
+                }
+            })
+            .on("progress", (progress) => {
+                if (typeof hooks.onProgress === "function") {
+                    hooks.onProgress(progress || {});
+                }
+            })
+            .on("end", () => {
+                resolve();
+            })
+            .on("error", (error) => {
+                reject(new Error(`Echec FFmpeg (${mode}): ${error.message}`));
+            })
+            .save(outputPath);
+    });
+}
+
+function validateWithFfprobe(filePath) {
+    return new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(filePath, (error, metadata) => {
+            if (error) {
+                reject(new Error(`ffprobe indisponible: ${error.message}`));
+                return;
+            }
+
+            const streams = Array.isArray(metadata?.streams) ? metadata.streams : [];
+            const hasVideo = streams.some((stream) => stream.codec_type === "video");
+
+            if (!hasVideo) {
+                reject(new Error("Aucun flux video detecte dans le MP4"));
+                return;
+            }
+
+            resolve();
+        });
+    });
+}
+
+function validateDecodePass(filePath) {
+    return new Promise((resolve, reject) => {
+        const ffmpegBin = process.env.FFMPEG_PATH || "ffmpeg";
+        const args = ["-v", "error", "-i", filePath, "-t", "120", "-f", "null", "-"];
+        const child = spawn(ffmpegBin, args, { stdio: ["ignore", "ignore", "pipe"] });
+        let stderr = "";
+
+        child.stderr.on("data", (chunk) => {
+            stderr += chunk.toString();
+        });
+
+        child.on("error", (error) => {
+            reject(new Error(`Validation ffmpeg impossible: ${error.message}`));
+        });
+
+        child.on("close", (code) => {
+            if (code === 0 && !stderr.trim()) {
+                resolve();
+                return;
+            }
+
+            reject(new Error(`Decode check en echec: ${stderr.trim() || `exit ${code}`}`));
+        });
+    });
+}
+
+async function validateOutputFile(outputPath) {
+    await validateWithFfprobe(outputPath);
+    await validateDecodePass(outputPath);
+}
+
+function removeOutputIfExists(outputPath) {
+    try {
+        if (fs.existsSync(outputPath)) {
+            fs.unlinkSync(outputPath);
+        }
+    } catch (_error) {
+        // Ignore delete errors before fallback transcode.
+    }
 }
 
 function downloadHlsToMp4(sourceUrl, headers = {}, hooks = {}, options = {}) {
@@ -111,43 +234,30 @@ function downloadHlsToMp4(sourceUrl, headers = {}, hooks = {}, options = {}) {
             }
             console.log(`[ffmpeg] Qualite: ${quality}`);
             console.log(`[ffmpeg] URL finale: ${finalUrl}`);
-            console.log(`[ffmpeg] Demarrage FFmpeg...`);
+            console.log("[ffmpeg] Demarrage FFmpeg en mode copy...");
 
-            return new Promise((resolve, reject) => {
-                const command = ffmpeg(finalUrl);
+            return runFfmpegConvert(finalUrl, inputOptions, outputPath, hooks, "copy")
+                .then(() => validateOutputFile(outputPath))
+                .catch((error) => {
+                    console.log(`[ffmpeg] Copy invalide/instable: ${error.message}`);
+                    console.log("[ffmpeg] Relance en mode transcodage robuste...");
+                    removeOutputIfExists(outputPath);
 
-                if (inputOptions.length > 0) {
-                    command.inputOptions(inputOptions);
-                }
+                    return runFfmpegConvert(finalUrl, inputOptions, outputPath, hooks, "transcode")
+                        .then(() => validateOutputFile(outputPath))
+                        .then(() => ({ mode: "transcode" }));
+                })
+                .then((fallbackResult) => {
+                    const mode = fallbackResult?.mode || "copy";
+                    console.log(`[ffmpeg] FFmpeg terminee avec succes - qualite finale: ${quality} - mode: ${mode}`);
 
-                command
-                    .outputOptions(["-c copy", "-bsf:a aac_adtstoasc"])
-                    .format("mp4")
-                    .on("start", () => {
-                        console.log(`[ffmpeg] FFmpeg demarrée`);
-                        if (typeof hooks.onStart === "function") {
-                            hooks.onStart();
-                        }
-                    })
-                    .on("progress", (progress) => {
-                        if (typeof hooks.onProgress === "function") {
-                            hooks.onProgress(progress || {});
-                        }
-                    })
-                    .on("end", () => {
-                        console.log(`[ffmpeg] FFmpeg terminée avec succes - qualite finale: ${quality}`);
-                        resolve({
-                            outputFileName,
-                            outputPath,
-                            quality
-                        });
-                    })
-                    .on("error", (error) => {
-                        console.log(`[ffmpeg] ERREUR FFmpeg: ${error.message}`);
-                        reject(new Error(`Echec FFmpeg: ${error.message}`));
-                    })
-                    .save(outputPath);
-            });
+                    return {
+                        outputFileName,
+                        outputPath,
+                        quality,
+                        mode
+                    };
+                });
         });
 }
 
