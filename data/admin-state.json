@@ -1,0 +1,59 @@
+{
+  "admin": {
+    "username": "beroute",
+    "email": "beroute97480@hotmail.fr",
+    "passwordHash": "01420cf4daad35d090b8de217bcf4145:e0d460bcdc62669d092d3352cbce879ab6521a2ad277ceaf3a8022ba991950364a2c0e11fe654c46c6295d28e84e089b40d60b1399d84696e759f2b08a63eea7",
+    "createdAt": "2026-05-12T07:00:25.951Z",
+    "updatedAt": "2026-05-12T07:00:25.951Z"
+  },
+  "apiKey": "",
+  "sessions": {
+    "0e0cc76e-7bfc-4417-b62c-19daff9656ba": {
+      "user": {
+        "username": "beroute",
+        "email": "beroute97480@hotmail.fr"
+      },
+      "expiresAt": 1778612425953
+    },
+    "6126b57a-5622-4844-b05d-cab299637986": {
+      "user": {
+        "username": "beroute",
+        "email": "beroute97480@hotmail.fr"
+      },
+      "expiresAt": 1778612777743
+    },
+    "0f343a55-e1bb-4adc-9ca5-97aea5b57d1f": {
+      "user": {
+        "username": "beroute",
+        "email": "beroute97480@hotmail.fr"
+      },
+      "expiresAt": 1778612936247
+    },
+    "2320761f-1d7f-47f4-b331-1050ae3c3bb1": {
+      "user": {
+        "username": "beroute",
+        "email": "beroute97480@hotmail.fr"
+      },
+      "expiresAt": 1778618273335
+    },
+    "3324bb48-3874-41fc-952a-a6a47b4e3ca6": {
+      "user": {
+        "username": "beroute",
+        "email": "beroute97480@hotmail.fr"
+      },
+      "expiresAt": 1778619310172
+    },
+    "77464a2d-68d8-4d8d-8a1c-54ff9c251924": {
+      "user": {
+        "username": "beroute",
+        "email": "beroute97480@hotmail.fr"
+      },
+      "expiresAt": 1778619385525
+    }
+  },
+  "setupToken": null,
+  "settings": {
+    "maxConcurrentDownloads": 3
+  },
+  "updatedAt": "2026-05-12T06:43:52.040Z"
+}

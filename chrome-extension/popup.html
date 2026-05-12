@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HLS URL Sender</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>HLS URL Sender</h1>
+
+      <details id="configSection">
+        <summary style="cursor:pointer; font-size:12px; color:#93c5fd; margin-bottom:6px;">&#9881; Configuration</summary>
+        <div style="margin-top:6px;">
+          <label for="serverUrl">Endpoint API</label>
+          <input id="serverUrl" type="text" placeholder="http://localhost:3000/api/download" />
+          <label for="apiKey" style="margin-top:6px;">API Key</label>
+          <input id="apiKey" type="password" placeholder="x-api-key" />
+          <button id="saveConfigBtn" type="button" style="margin-top:8px; width:100%;">Sauvegarder</button>
+        </div>
+      </details>
+
+      <div id="hlsUrlSection" style="display:none;">
+        <label for="hlsUrl">URL .m3u8 detectee</label>
+        <textarea id="hlsUrl" rows="4" placeholder="URL HLS"></textarea>
+      </div>
+
+      <label for="videoName">Nom de la video</label>
+      <input id="videoName" type="text" placeholder="Titre video" />
+
+      <label for="referer">Referer (optionnel)</label>
+      <input id="referer" type="text" placeholder="https://site-source.example/" />
+
+      <label for="userAgent">User-Agent (optionnel)</label>
+      <input id="userAgent" type="text" placeholder="Mozilla/5.0 ..." />
+
+      <label for="cookie">Cookie (optionnel)</label>
+      <textarea id="cookie" rows="2" placeholder="name=value; other=value"></textarea>
+
+      <div class="actions">
+        <button id="detectBtn" type="button">Detecter</button>
+        <button id="sendBtn" type="button">Envoyer</button>
+      </div>
+
+      <div class="progress-wrap" aria-live="polite">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+      <div id="progressText" class="progress-text">0%</div>
+
+      <div id="activeSection" style="display:none; margin: 8px 0; border: 1px solid #3d4f6a; border-radius: 4px; padding: 6px 10px; font-size: 12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <span style="font-weight:bold;">Telechargements actifs</span>
+          <span id="activeCount" style="background:#2563eb; color:#fff; border-radius:10px; padding:1px 7px; font-size:11px;">0</span>
+        </div>
+        <div id="concurrencyInfo" style="margin-bottom:4px; color:#dbeafe;">Concurrence max: 1</div>
+        <ul id="activeList" style="margin:0; padding:0 0 0 16px; list-style:disc;"></ul>
+      </div>
+
+      <div id="queueSection" style="display:none; margin: 8px 0; border: 1px solid #ccc; border-radius: 4px; padding: 6px 10px; font-size: 12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <span style="font-weight:bold;">File d'attente</span>
+          <span id="queueCount" style="background:#555; color:#fff; border-radius:10px; padding:1px 7px; font-size:11px;">0</span>
+        </div>
+        <ul id="queueList" style="margin:0; padding:0 0 0 16px; list-style:decimal;"></ul>
+      </div>
+
+      <div id="statusMsg" style="min-height:20px; font-size:12px; color:#93c5fd; margin-top:4px;"></div>
+      <pre id="result" style="display:none;">Pret.</pre>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

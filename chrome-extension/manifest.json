@@ -1,0 +1,36 @@
+{
+    "manifest_version": 3,
+    "name": "HLS URL Sender",
+    "description": "Detecte les URLs .m3u8 et les envoie au serveur local.",
+    "version": "1.0.0",
+    "permissions": [
+        "storage",
+        "tabs",
+        "activeTab",
+        "webRequest",
+        "downloads",
+        "scripting",
+        "alarms"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "action": {
+        "default_title": "HLS URL Sender",
+        "default_popup": "popup.html"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "content-script.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ]
+}
