@@ -1,0 +1,12 @@
+services:
+  hls-downloader:
+    build: .
+    container_name: hls-downloader-service
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "3301:3000"
+    volumes:
+      - ./data:/app/data
+      - ./downloads:/app/downloads

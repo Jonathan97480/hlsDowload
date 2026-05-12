@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules
+downloads
+coverage
+npm-debug.log*
+Dockerfile
+README.md
+.vscode
+*.sqlite
+*.db-shm
+*.db-wal

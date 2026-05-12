@@ -177,6 +177,8 @@ Important Docker:
 
 - Ne pas oublier les volumes `data` et `downloads` pour conserver l'etat.
 - Si `FFMPEG_PATH` est defini, verifier qu'il pointe vers un chemin valide dans le conteneur.
+- `restart: unless-stopped` permet au conteneur de redemarrer automatiquement apres un reboot du serveur Docker.
+- Le depot inclut maintenant un `.dockerignore` pour reduire la taille du contexte de build.
 
 ## API
 
