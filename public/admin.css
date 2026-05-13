@@ -734,6 +734,31 @@ body {
 .lte-table .job-quality { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .lte-table .job-msg     { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 
+.mode-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.mode-badge-standard {
+  background: #dff5e9;
+  color: #1e7e34;
+}
+
+.mode-badge-fallback {
+  background: #fff4d6;
+  color: #9a6700;
+}
+
+.mode-badge-unknown {
+  background: #ececec;
+  color: #666;
+}
+
 /* Status Pills */
 .status-pill {
   display: inline-block;

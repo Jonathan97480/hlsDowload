@@ -1,11 +1,11 @@
 const fs = require("fs");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
-const { downloadHlsToMp4 } = require("./ffmpeg.service");
 const { getSettings } = require("./admin-store.service");
 const { getSystemMetrics } = require("./system-metrics.service");
 const { getDb } = require("./sqlite.service");
 const { ensureDiskSpaceForDownload } = require("./storage-guard.service");
+const { downloadMediaToMp4, getDownloadSourceType } = require("./media-download.service");
 
 const db = getDb();
 const jobs = new Map();
@@ -17,12 +17,12 @@ let activeJobs = 0;
 const upsertJobStatement = db.prepare(`
     INSERT INTO jobs (
         job_id, request_key, url, preferred_name, headers_json, status, progress,
-        timemark, message, file_name, file_path, file_size_bytes, source_ip,
+        timemark, message, file_name, file_path, ffmpeg_mode, file_size_bytes, source_ip,
         client_id, user_agent, started_at, completed_at, duration_ms, error,
         updated_at, created_at
     ) VALUES (
         @jobId, @requestKey, @url, @preferredName, @headersJson, @status, @progress,
-        @timemark, @message, @fileName, @filePath, @fileSizeBytes, @sourceIp,
+        @timemark, @message, @fileName, @filePath, @ffmpegMode, @fileSizeBytes, @sourceIp,
         @clientId, @userAgent, @startedAt, @completedAt, @durationMs, @error,
         @updatedAt, @createdAt
     )
@@ -37,6 +37,7 @@ const upsertJobStatement = db.prepare(`
         message = excluded.message,
         file_name = excluded.file_name,
         file_path = excluded.file_path,
+        ffmpeg_mode = excluded.ffmpeg_mode,
         file_size_bytes = excluded.file_size_bytes,
         source_ip = excluded.source_ip,
         client_id = excluded.client_id,
@@ -73,6 +74,7 @@ function rowToJob(row) {
         message: row.message || "",
         fileName: row.file_name || "",
         filePath: row.file_path || "",
+        ffmpegMode: row.ffmpeg_mode || "",
         fileSizeBytes: row.file_size_bytes || 0,
         sourceIp: row.source_ip || "",
         clientId: row.client_id || "",
@@ -99,6 +101,7 @@ function persistJob(job) {
         message: job.message || "",
         fileName: job.fileName || "",
         filePath: job.filePath || "",
+        ffmpegMode: job.ffmpegMode || "",
         fileSizeBytes: Number.isFinite(job.fileSizeBytes) ? job.fileSizeBytes : 0,
         sourceIp: job.sourceIp || "",
         clientId: job.clientId || "",
@@ -150,6 +153,7 @@ function createJob(url, preferredName = "") {
         message: "En attente",
         fileName: "",
         filePath: "",
+        ffmpegMode: "",
         fileSizeBytes: 0,
         sourceIp: "",
         clientId: "",
@@ -424,7 +428,11 @@ function startQueuedJob(job) {
         message: "Telechargement demarre"
     });
 
-    downloadHlsToMp4(job.url, job.headers || {}, {
+    const settings = getSettings();
+
+    const sourceType = getDownloadSourceType(job.url);
+
+    downloadMediaToMp4(job.url, job.headers || {}, {
         onStart: () => {
             finalizeJob(job.jobId, {
                 status: "running",
@@ -442,7 +450,8 @@ function startQueuedJob(job) {
             });
         }
     }, {
-        preferredName: job.preferredName || ""
+        preferredName: job.preferredName || "",
+        maxTitleLength: settings.maxTitleLength
     })
         .then((result) => {
             const completedAt = Date.now();
@@ -464,7 +473,8 @@ function startQueuedJob(job) {
                 fileSizeBytes,
                 message: `Telechargement termine (${result.quality || "default"})`,
                 fileName: result.outputFileName,
-                filePath: `/downloads/${result.outputFileName}`
+                filePath: `/downloads/${result.outputFileName}`,
+                ffmpegMode: result.mode || (sourceType === "direct" ? "direct" : "copy")
             });
         })
         .catch((error) => {
@@ -493,7 +503,7 @@ function findCompletedDownload({ url, headers, preferredName }) {
     return null;
 }
 
-function runDownloadJob({ url, headers, preferredName, clientId = "", userAgent = "", ipAddress = "" }) {
+function runDownloadJob({ url, headers, preferredName, maxTitleLength = 500, clientId = "", userAgent = "", ipAddress = "" }) {
     const requestKey = buildRequestKey({ url, headers, preferredName });
     const reusable = findReusableJob(requestKey);
 
@@ -505,6 +515,7 @@ function runDownloadJob({ url, headers, preferredName, clientId = "", userAgent 
     updateJob(job.jobId, {
         requestKey,
         headers,
+        maxTitleLength,
         clientId,
         userAgent,
         sourceIp: ipAddress

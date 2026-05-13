@@ -3,27 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HLS URL Sender</title>
+    <title>Video URL Sender</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <main>
-      <h1>HLS URL Sender</h1>
+      <h1>Video URL Sender</h1>
 
       <details id="configSection">
-        <summary style="cursor:pointer; font-size:12px; color:#93c5fd; margin-bottom:6px;">&#9881; Configuration</summary>
-        <div style="margin-top:6px;">
+        <summary class="config-summary">&#9881; Configuration</summary>
+        <div class="config-panel">
           <label for="serverUrl">Endpoint API</label>
           <input id="serverUrl" type="text" placeholder="http://localhost:3000/api/download" />
-          <label for="apiKey" style="margin-top:6px;">API Key</label>
+          <label for="apiKey" class="spaced-label">API Key</label>
           <input id="apiKey" type="password" placeholder="x-api-key" />
-          <button id="saveConfigBtn" type="button" style="margin-top:8px; width:100%;">Sauvegarder</button>
+          <button id="saveConfigBtn" type="button" class="save-config-btn">Sauvegarder</button>
         </div>
       </details>
 
-      <div id="hlsUrlSection" style="display:none;">
-        <label for="hlsUrl">URL .m3u8 detectee</label>
-        <textarea id="hlsUrl" rows="4" placeholder="URL HLS"></textarea>
+      <div id="mediaUrlSection" class="hidden-section">
+        <label for="mediaUrl">URL video detectee</label>
+        <textarea id="mediaUrl" rows="4" placeholder="URL .m3u8 ou .mp4"></textarea>
       </div>
 
       <label for="videoName">Nom de la video</label>
@@ -48,25 +48,25 @@
       </div>
       <div id="progressText" class="progress-text">0%</div>
 
-      <div id="activeSection" style="display:none; margin: 8px 0; border: 1px solid #3d4f6a; border-radius: 4px; padding: 6px 10px; font-size: 12px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <span style="font-weight:bold;">Telechargements actifs</span>
-          <span id="activeCount" style="background:#2563eb; color:#fff; border-radius:10px; padding:1px 7px; font-size:11px;">0</span>
+      <div id="activeSection" class="status-card status-card-active hidden-section">
+        <div class="status-card-header">
+          <span class="status-card-title">Telechargements actifs</span>
+          <span id="activeCount" class="status-chip status-chip-active">0</span>
         </div>
-        <div id="concurrencyInfo" style="margin-bottom:4px; color:#dbeafe;">Concurrence max: 1</div>
-        <ul id="activeList" style="margin:0; padding:0 0 0 16px; list-style:disc;"></ul>
+        <div id="concurrencyInfo" class="concurrency-info">Concurrence max: 1</div>
+        <ul id="activeList" class="status-list status-list-disc"></ul>
       </div>
 
-      <div id="queueSection" style="display:none; margin: 8px 0; border: 1px solid #ccc; border-radius: 4px; padding: 6px 10px; font-size: 12px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-          <span style="font-weight:bold;">File d'attente</span>
-          <span id="queueCount" style="background:#555; color:#fff; border-radius:10px; padding:1px 7px; font-size:11px;">0</span>
+      <div id="queueSection" class="status-card status-card-queue hidden-section">
+        <div class="status-card-header">
+          <span class="status-card-title">File d'attente</span>
+          <span id="queueCount" class="status-chip status-chip-queue">0</span>
         </div>
-        <ul id="queueList" style="margin:0; padding:0 0 0 16px; list-style:decimal;"></ul>
+        <ul id="queueList" class="status-list status-list-decimal"></ul>
       </div>
 
-      <div id="statusMsg" style="min-height:20px; font-size:12px; color:#93c5fd; margin-top:4px;"></div>
-      <pre id="result" style="display:none;">Pret.</pre>
+      <div id="statusMsg" class="status-message"></div>
+      <pre id="result" class="hidden-log">Pret.</pre>
     </main>
     <script src="popup.js"></script>
   </body>

@@ -159,6 +159,7 @@ function dashboardStream(req, res) {
             cpuPercent: snapshot.cpuPercent,
             memoryPercent: snapshot.memoryPercent,
             jobs: snapshot.jobs,
+            history: snapshot.history,
             settings: getSettings()
         };
 

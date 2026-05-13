@@ -6,6 +6,14 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const SETUP_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_ADMIN_USERNAME = process.env.ADMIN_DEFAULT_USERNAME || "admin";
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "admin123";
+const MAX_CONCURRENT_MIN = 1;
+const MAX_CONCURRENT_MAX = 12;
+const MAX_TITLE_LENGTH_MIN = 50;
+const MAX_TITLE_LENGTH_MAX = 500;
+const DEFAULT_SETTINGS = {
+    maxConcurrentDownloads: 3,
+    maxTitleLength: 500
+};
 
 function parseJson(value, fallback) {
     if (typeof value !== "string" || !value) {
@@ -258,20 +266,32 @@ function revokeSession(token) {
 
 function getSettings() {
     pruneExpiredSessions();
-    const parsed = parseJson(getStateValue("settings_json", ""), { maxConcurrentDownloads: 3 });
+    const parsed = parseJson(getStateValue("settings_json", ""), DEFAULT_SETTINGS);
     const raw = Number.parseInt(parsed.maxConcurrentDownloads, 10);
+    const rawTitleLength = Number.parseInt(parsed.maxTitleLength, 10);
 
     return {
-        maxConcurrentDownloads: Number.isFinite(raw) ? Math.min(12, Math.max(1, raw)) : 3
+        maxConcurrentDownloads: Number.isFinite(raw)
+            ? Math.min(MAX_CONCURRENT_MAX, Math.max(MAX_CONCURRENT_MIN, raw))
+            : DEFAULT_SETTINGS.maxConcurrentDownloads,
+        maxTitleLength: Number.isFinite(rawTitleLength)
+            ? Math.min(MAX_TITLE_LENGTH_MAX, Math.max(MAX_TITLE_LENGTH_MIN, rawTitleLength))
+            : DEFAULT_SETTINGS.maxTitleLength
     };
 }
 
 function updateSettings(patch = {}) {
     const nextValue = Number.parseInt(patch.maxConcurrentDownloads, 10);
+    const nextTitleLength = Number.parseInt(patch.maxTitleLength, 10);
     const current = getSettings();
     const nextSettings = {
         ...current,
-        maxConcurrentDownloads: Number.isFinite(nextValue) ? Math.min(12, Math.max(1, nextValue)) : current.maxConcurrentDownloads
+        maxConcurrentDownloads: Number.isFinite(nextValue)
+            ? Math.min(MAX_CONCURRENT_MAX, Math.max(MAX_CONCURRENT_MIN, nextValue))
+            : current.maxConcurrentDownloads,
+        maxTitleLength: Number.isFinite(nextTitleLength)
+            ? Math.min(MAX_TITLE_LENGTH_MAX, Math.max(MAX_TITLE_LENGTH_MIN, nextTitleLength))
+            : current.maxTitleLength
     };
 
     setStateValue("settings_json", JSON.stringify(nextSettings));

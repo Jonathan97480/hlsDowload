@@ -36,6 +36,29 @@ textarea {
   resize: vertical;
 }
 
+.hidden-section {
+  display: none;
+}
+
+.config-summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #0f766e;
+  margin-bottom: 6px;
+}
+
+.config-panel {
+  margin-top: 6px;
+}
+
+.spaced-label {
+  margin-top: 6px;
+}
+
+.save-config-btn {
+  margin-top: 8px;
+}
+
 .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -65,6 +88,72 @@ textarea {
   color: #334155;
 }
 
+.status-card {
+  margin: 8px 0;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.status-card-active {
+  border: 1px solid #3d4f6a;
+}
+
+.status-card-queue {
+  border: 1px solid #cfd6e3;
+}
+
+.status-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.status-card-title {
+  font-weight: 700;
+}
+
+.status-chip {
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 11px;
+}
+
+.status-chip-active {
+  background: #2563eb;
+}
+
+.status-chip-queue {
+  background: #555;
+}
+
+.concurrency-info {
+  margin-bottom: 4px;
+  color: #475569;
+}
+
+.status-list {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.status-list-disc {
+  list-style: disc;
+}
+
+.status-list-decimal {
+  list-style: decimal;
+}
+
+.status-message {
+  min-height: 20px;
+  font-size: 12px;
+  color: #0f766e;
+  margin-top: 4px;
+}
+
 button {
   background: #0f766e;
   border: none;
@@ -86,4 +175,8 @@ button:disabled {
   white-space: pre-wrap;
   max-height: 180px;
   overflow: auto;
+}
+
+.hidden-log {
+  display: none;
 }

@@ -55,6 +55,7 @@ function createSchema(database) {
             message TEXT DEFAULT '',
             file_name TEXT DEFAULT '',
             file_path TEXT DEFAULT '',
+            ffmpeg_mode TEXT DEFAULT '',
             file_size_bytes INTEGER DEFAULT 0,
             source_ip TEXT DEFAULT '',
             client_id TEXT DEFAULT '',
@@ -73,6 +74,15 @@ function createSchema(database) {
     `);
 }
 
+function ensureJobsColumns(database) {
+    const rows = database.prepare("PRAGMA table_info(jobs)").all();
+    const names = new Set(rows.map((row) => row.name));
+
+    if (!names.has("ffmpeg_mode")) {
+        database.exec("ALTER TABLE jobs ADD COLUMN ffmpeg_mode TEXT DEFAULT ''");
+    }
+}
+
 function upsertState(database, key, valueText) {
     database.prepare(`
         INSERT INTO app_state (key, value_text, updated_at)
@@ -87,7 +97,10 @@ function seedDefaults(database) {
     const now = Date.now();
     const hasSettings = database.prepare("SELECT 1 FROM app_state WHERE key = ?").get("settings_json");
     if (!hasSettings) {
-        upsertState(database, "settings_json", JSON.stringify({ maxConcurrentDownloads: 3 }));
+        upsertState(database, "settings_json", JSON.stringify({
+            maxConcurrentDownloads: 3,
+            maxTitleLength: 500
+        }));
     }
 
     const hasApiKey = database.prepare("SELECT 1 FROM app_state WHERE key = ?").get("api_key");
@@ -179,6 +192,7 @@ function getDb() {
     ensureDataDir();
     db = new Database(DB_FILE);
     createSchema(db);
+    ensureJobsColumns(db);
     seedDefaults(db);
     return db;
 }

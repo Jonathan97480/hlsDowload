@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
-    "name": "HLS URL Sender",
-    "description": "Detecte les URLs .m3u8 et les envoie au serveur local.",
+    "name": "Video URL Sender",
+    "description": "Detecte les URLs .m3u8 et .mp4 et les envoie au serveur local.",
     "version": "1.0.0",
     "permissions": [
         "storage",
@@ -10,7 +10,8 @@
         "webRequest",
         "downloads",
         "scripting",
-        "alarms"
+        "alarms",
+        "cookies"
     ],
     "host_permissions": [
         "<all_urls>"
@@ -19,7 +20,7 @@
         "service_worker": "background.js"
     },
     "action": {
-        "default_title": "HLS URL Sender",
+        "default_title": "Video URL Sender",
         "default_popup": "popup.html"
     },
     "content_scripts": [
@@ -30,7 +31,18 @@
             "js": [
                 "content-script.js"
             ],
-            "run_at": "document_idle"
+            "run_at": "document_idle",
+            "all_frames": true
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "page-hook.js"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
         }
     ]
 }

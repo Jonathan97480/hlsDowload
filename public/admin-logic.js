@@ -9,8 +9,10 @@ const profileMessage = document.getElementById("profileMessage");
 const bootstrapHint = document.getElementById("bootstrapHint");
 const setupHint = document.getElementById("setupHint");
 const jobsTableBody = document.getElementById("jobsTableBody");
+const historyTableBody = document.getElementById("historyTableBody");
 const bandwidthCanvas = document.getElementById("bandwidthChart");
 const maxConcurrentDownloadsInput = document.getElementById("maxConcurrentDownloads");
+const maxTitleLengthInput = document.getElementById("maxTitleLength");
 const apiKeyReveal = document.getElementById("apiKeyReveal");
 const profileUsernameInput = document.getElementById("profileUsername");
 const profileEmailInput = document.getElementById("profileEmail");
@@ -156,6 +158,20 @@ function syncAdminProfile(user) {
     if (navbarEl) navbarEl.textContent = name;
 }
 
+function buildModeBadge(job) {
+    const mode = (job?.ffmpegMode || "").toLowerCase();
+
+    if (mode === "transcode") {
+        return '<span class="mode-badge mode-badge-fallback" title="Mode fallback FFmpeg utilise (transcodage)">🛠 Fallback</span>';
+    }
+
+    if (mode === "copy") {
+        return '<span class="mode-badge mode-badge-standard" title="Mode standard FFmpeg (copy)">✔ Standard</span>';
+    }
+
+    return '<span class="mode-badge mode-badge-unknown" title="Mode FFmpeg non disponible">? Inconnu</span>';
+}
+
 function renderJobs(jobs) {
     if (!jobs || jobs.length === 0) {
         jobsTableBody.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">Aucun job recent.</td></tr>';
@@ -182,7 +198,7 @@ function renderJobs(jobs) {
             </td>
             <td>
               <div class="job-file">${job.fileName || job.preferredName || "En attente"}</div>
-              <div class="job-quality">${job.quality || "qualite inconnue"}</div>
+                            <div class="job-quality">${job.quality || "qualite inconnue"} · ${buildModeBadge(job)}</div>
             </td>
             <td>
               <div>Flux: ${formatDuration(job.durationMs || 0)}</div>
@@ -198,6 +214,43 @@ function renderJobs(jobs) {
     }).join("");
 }
 
+function renderHistory(history) {
+    if (!historyTableBody) {
+        return;
+    }
+
+    const list = Array.isArray(history)
+        ? history.filter((job) => job.status === "completed" || job.status === "failed")
+        : [];
+
+    if (list.length === 0) {
+        historyTableBody.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">Aucun historique disponible.</td></tr>';
+        return;
+    }
+
+    historyTableBody.innerHTML = list.map((job) => {
+        const finishedAt = job.completedAt || job.updatedAt || 0;
+        const dateLabel = finishedAt ? new Date(finishedAt).toLocaleString() : "--";
+        const statusClass = job.status === "completed" ? "pill-completed" : "pill-failed";
+
+        return `
+                    <tr>
+                        <td>${dateLabel}</td>
+                        <td>
+                            <div class="job-user">${job.clientId || "unknown"}</div>
+                            <div class="job-ip">${job.sourceIp || ""}</div>
+                        </td>
+                        <td>
+                            <div class="job-file">${job.fileName || job.preferredName || "--"}</div>
+                            <div class="job-msg">${job.message || ""}</div>
+                        </td>
+                        <td>${buildModeBadge(job)}</td>
+                        <td><span class="status-pill ${statusClass}">${job.status}</span></td>
+                    </tr>
+                `;
+    }).join("");
+}
+
 function renderDashboard(data) {
     serverStatus.textContent = data.serverStatus || "Idle";
     serverStatus.className = data.serverStatus === "Busy"
@@ -210,6 +263,7 @@ function renderDashboard(data) {
     avgProcessingValue.textContent = formatDuration(data.averageProcessingMs || 0);
     queueValue.textContent = `${data.queuedDownloads || 0} en file`;
     maxConcurrentDownloadsInput.value = data.settings?.maxConcurrentDownloads || 3;
+    maxTitleLengthInput.value = data.settings?.maxTitleLength || 500;
 
     if (window.createGaugeChart) {
         try {
@@ -231,6 +285,7 @@ function renderDashboard(data) {
 
     lastRefresh.textContent = `Mise a jour: ${new Date().toLocaleString()}`;
     renderJobs(data.jobs || []);
+    renderHistory(data.history || []);
     syncAdminProfile(data.admin);
 }
 
@@ -507,7 +562,8 @@ settingsForm.addEventListener("submit", async (event) => {
         const result = await fetchJson("/api/admin/settings", {
             method: "PATCH",
             body: JSON.stringify({
-                maxConcurrentDownloads: maxConcurrentDownloadsInput.value
+                maxConcurrentDownloads: maxConcurrentDownloadsInput.value,
+                maxTitleLength: maxTitleLengthInput.value
             })
         });
 

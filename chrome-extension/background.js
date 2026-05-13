@@ -2,6 +2,12 @@ const tabStreams = new Map();
 const STREAMS_KEY = "tabStreams";
 const MANAGER_KEY = "downloadManagerState";
 const POLL_ALARM = "download-manager-poll";
+const PUBLIC_IP_CACHE_TTL_MS = 10 * 60 * 1000;
+
+let publicIpCache = {
+    value: "",
+    expiresAt: 0
+};
 
 let managerLock = Promise.resolve();
 
@@ -9,8 +15,8 @@ function normalizeUrl(url) {
     return typeof url === "string" ? url.trim() : "";
 }
 
-function isHlsUrl(url) {
-    return /^https?:\/\//i.test(url) && /\.m3u8(\?.*)?$/i.test(url);
+function isSupportedMediaUrl(url) {
+    return /^https?:\/\//i.test(url) && /\.(m3u8|mp4)(\?.*)?$/i.test(url);
 }
 
 function normalizeEntry(entry) {
@@ -27,6 +33,7 @@ function scoreCandidate(url) {
         let score = 0;
         if (/master\.m3u8|manifest\.m3u8|playlist\.m3u8|main\.m3u8|stream\.m3u8/.test(lower)) score += 120;
         if (/index\.m3u8/.test(lower)) score += 80;
+        if (/\.mp4$/.test(lower)) score += 50;
         if (/index-v\d+-a\d+|segment-\d+|variant[_-]\d+|quality[_-](360|480|720|1080)/.test(lower)) score -= 90;
         return score - (lower.length * 0.01);
     } catch (_error) {
@@ -39,7 +46,7 @@ function getBestEntry(urls) {
     let bestScore = -Infinity;
     (Array.isArray(urls) ? urls : []).forEach((item) => {
         const normalized = normalizeEntry(item);
-        if (!normalized || !isHlsUrl(normalized.url)) return;
+        if (!normalized || !isSupportedMediaUrl(normalized.url)) return;
         const score = scoreCandidate(normalized.url);
         if (score > bestScore) {
             bestScore = score;
@@ -89,6 +96,88 @@ function originFromServerUrl(serverUrl) {
     } catch (_error) {
         return "http://localhost:3000";
     }
+}
+
+function normalizeIp(ip) {
+    const value = String(ip || "").trim().replace(/^::ffff:/i, "");
+    return value;
+}
+
+function isPublicIp(ip) {
+    const value = normalizeIp(ip);
+
+    if (!value) {
+        return false;
+    }
+
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) {
+        if (/^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(value)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    if (/^[0-9a-f:]+$/i.test(value)) {
+        const lower = value.toLowerCase();
+        if (lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80:")) {
+            return false;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+async function fetchPublicIpFrom(url, mapper) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    try {
+        const response = await fetch(url, {
+            method: "GET",
+            signal: controller.signal,
+            cache: "no-store"
+        });
+
+        if (!response.ok) {
+            return "";
+        }
+
+        const value = await mapper(response);
+        const normalized = normalizeIp(value);
+        return isPublicIp(normalized) ? normalized : "";
+    } catch (_error) {
+        return "";
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+async function resolvePublicIp() {
+    if (publicIpCache.value && publicIpCache.expiresAt > Date.now()) {
+        return publicIpCache.value;
+    }
+
+    const providers = [
+        () => fetchPublicIpFrom("https://api.ipify.org?format=json", async (res) => (await res.json())?.ip || ""),
+        () => fetchPublicIpFrom("https://api64.ipify.org?format=json", async (res) => (await res.json())?.ip || ""),
+        () => fetchPublicIpFrom("https://ifconfig.me/ip", async (res) => await res.text())
+    ];
+
+    for (const provider of providers) {
+        const ip = await provider();
+        if (ip) {
+            publicIpCache = {
+                value: ip,
+                expiresAt: Date.now() + PUBLIC_IP_CACHE_TTL_MS
+            };
+            return ip;
+        }
+    }
+
+    return "";
 }
 
 async function fetchCapacity(serverUrl, apiKey) {
@@ -141,15 +230,25 @@ async function startQueuedJobsInternal(state) {
 
         const item = state.queue.shift();
         const serverOrigin = originFromServerUrl(item.serverUrl);
+        const clientPublicIp = await resolvePublicIp();
+        const payload = {
+            ...(item.body || {}),
+            clientPublicIp
+        };
+        const requestHeaders = {
+            "Content-Type": "application/json",
+            "x-api-key": item.apiKey
+        };
+
+        if (clientPublicIp) {
+            requestHeaders["x-client-public-ip"] = clientPublicIp;
+        }
 
         try {
             const response = await fetch(`${item.serverUrl}/start`, {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-api-key": item.apiKey
-                },
-                body: JSON.stringify(item.body)
+                headers: requestHeaders,
+                body: JSON.stringify(payload)
             });
 
             const data = await response.json();
@@ -276,23 +375,60 @@ async function pollActiveJobs() {
     });
 }
 
+function fetchCookiesForUrl(url) {
+    return new Promise((resolve) => {
+        chrome.cookies.getAll({ url }, (cookies) => {
+            if (!Array.isArray(cookies) || cookies.length === 0) {
+                resolve("");
+                return;
+            }
+            resolve(cookies.map((c) => `${c.name}=${c.value}`).join("; "));
+        });
+    });
+}
+
+async function fetchCookiesForMediaAndPage(mediaUrl, pageUrl) {
+    const sources = [mediaUrl, pageUrl].filter((u) => typeof u === "string" && u.startsWith("http"));
+    const allCookies = new Map();
+
+    for (const url of sources) {
+        try {
+            const raw = await fetchCookiesForUrl(url);
+            if (!raw) continue;
+            raw.split("; ").forEach((pair) => {
+                const eq = pair.indexOf("=");
+                if (eq > 0) {
+                    allCookies.set(pair.slice(0, eq), pair);
+                }
+            });
+        } catch (_error) { /* skip */ }
+    }
+
+    return allCookies.size > 0 ? Array.from(allCookies.values()).join("; ") : "";
+}
+
 function rememberUrl(tabId, url, context = {}) {
     const safeUrl = normalizeUrl(url);
-    if (!isHlsUrl(safeUrl) || tabId < 0) return;
+    if (!isSupportedMediaUrl(safeUrl) || tabId < 0) return;
 
     const urls = tabStreams.get(tabId) || [];
     const exists = urls.some((item) => normalizeEntry(item)?.url === safeUrl);
     if (exists) return;
 
-    urls.unshift({ url: safeUrl, context: context || {} });
+    const entry = { url: safeUrl, context: context || {} };
+    urls.unshift(entry);
     tabStreams.set(tabId, urls.slice(0, 20));
 
-    const out = {};
-    for (const [id, values] of tabStreams.entries()) {
-        out[String(id)] = values;
-    }
+    const pageUrl = context.referer || context.documentUrl || "";
+    fetchCookiesForMediaAndPage(safeUrl, pageUrl).then((cookieStr) => {
+        entry.context.cookie = cookieStr;
 
-    chrome.storage.local.set({ [STREAMS_KEY]: out }).catch(() => { });
+        const out = {};
+        for (const [id, values] of tabStreams.entries()) {
+            out[String(id)] = values;
+        }
+        chrome.storage.local.set({ [STREAMS_KEY]: out }).catch(() => { });
+    });
 }
 
 async function hydrateFromStorage() {

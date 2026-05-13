@@ -1,8 +1,14 @@
-function isHlsUrl(url) {
-    return /^https?:\/\//i.test(url) && /\.m3u8(\?.*)?$/i.test(url);
+const PAGE_HOOK_EVENT = "media-url-sender:detected";
+const PAGE_HOOK_SOURCE = "media-url-sender";
+const RESCAN_DELAYS_MS = [0, 1200, 3000, 6000];
+let observerStarted = false;
+let pageHookInjected = false;
+
+function isSupportedMediaUrl(url) {
+    return /^https?:\/\//i.test(url) && /\.(m3u8|mp4)(\?.*)?$/i.test(url);
 }
 
-function toAbsoluteHlsUrl(raw) {
+function toAbsoluteMediaUrl(raw) {
     if (typeof raw !== "string") {
         return "";
     }
@@ -14,15 +20,13 @@ function toAbsoluteHlsUrl(raw) {
 
     try {
         const resolved = new URL(trimmed, document.location.href).href;
-        return isHlsUrl(resolved) ? resolved : "";
+        return isSupportedMediaUrl(resolved) ? resolved : "";
     } catch (_error) {
         return "";
     }
 }
 
 function isMasterLikeUrl(url) {
-    // Chercher des patterns qui indiquent un master M3U8
-    // Exclure les URLs avec patterns de variantes comme "index-v1-a1", "index-vX-aX"
     let urlPath = "";
     try {
         urlPath = new URL(url, document.location.href).pathname.toLowerCase();
@@ -30,76 +34,146 @@ function isMasterLikeUrl(url) {
         return false;
     }
 
-    const hasVariantPattern = /index-v\d+-a\d+|segment-\d+|variant[_-]\d+|quality[_-](360|480|720|1080)/i.test(urlPath);
-    return !hasVariantPattern;
+    return !/index-v\d+-a\d+|segment-\d+|variant[_-]\d+|quality[_-](360|480|720|1080)/i.test(urlPath);
 }
 
-function getPageContext() {
+function getPageContext(source = "dom") {
     return {
         referer: document.referrer || document.location.href,
         userAgent: navigator.userAgent,
-        documentUrl: document.location.href
+        documentUrl: document.location.href,
+        source
     };
 }
 
-function collectCandidates() {
-    const candidates = new Set();
-    const masterUrls = new Set(); // Chercher d'abord les masters
+function rankCandidate(url) {
+    return isMasterLikeUrl(url) ? 2 : 1;
+}
 
-    // Scan DOM pour m3u8 dans les attributs
-    document.querySelectorAll("[src], [href], [data-url], [data-src], [data-m3u8]").forEach((element) => {
+function collectCandidates() {
+    const candidates = new Map();
+    const selectors = ["[src]", "[href]", "[data-url]", "[data-src]", "[data-m3u8]", "video", "source"];
+
+    document.querySelectorAll(selectors.join(",")).forEach((element) => {
         ["src", "href", "data-url", "data-src", "data-m3u8"].forEach((attr) => {
-            const val = element.getAttribute(attr);
-            const url = toAbsoluteHlsUrl(val);
-            if (url) {
-                if (isMasterLikeUrl(url)) {
-                    masterUrls.add(url);
-                } else {
-                    candidates.add(url);
-                }
+            const url = toAbsoluteMediaUrl(element.getAttribute(attr));
+            if (url && !candidates.has(url)) {
+                candidates.set(url, rankCandidate(url));
             }
         });
     });
 
-    // Scan HTML pour m3u8 dans le texte/scripts
     const html = document.documentElement?.innerHTML || "";
-    const absoluteMatches = html.match(/https?:[^\"'\s]+\.m3u8(?:\?[^\"'\s]*)?/gi) || [];
-    const relativeMatches = html.match(/(?:^|[\"'\s])(\/[^\"'\s]+\.m3u8(?:\?[^\"'\s]*)?)/gi) || [];
-    const matches = absoluteMatches.concat(relativeMatches.map((v) => v.trim()));
-
-    matches.forEach((rawUrl) => {
-        const url = toAbsoluteHlsUrl(rawUrl);
-        if (url) {
-            if (isMasterLikeUrl(url)) {
-                masterUrls.add(url);
-            } else {
-                candidates.add(url);
-            }
+    const absoluteMatches = html.match(/https?:[^\"'\s]+\.(?:m3u8|mp4)(?:\?[^\"'\s]*)?/gi) || [];
+    const relativeMatches = html.match(/(?:^|[\"'\s])(\/[^\"'\s]+\.(?:m3u8|mp4)(?:\?[^\"'\s]*)?)/gi) || [];
+    absoluteMatches.concat(relativeMatches.map((value) => value.trim())).forEach((rawUrl) => {
+        const url = toAbsoluteMediaUrl(rawUrl);
+        if (url && !candidates.has(url)) {
+            candidates.set(url, rankCandidate(url));
         }
     });
 
-    // Priorité: masters d'abord, puis variantes
-    const all = Array.from(masterUrls).concat(Array.from(candidates));
-    return all.slice(0, 20);
+    return Array.from(candidates.entries())
+        .sort((left, right) => right[1] - left[1])
+        .map(([url]) => url)
+        .slice(0, 20);
 }
 
-function pushCandidatesToBackground() {
+function pushUrl(url, source = "dom", extras = {}) {
+    const safeUrl = toAbsoluteMediaUrl(url);
+    if (!safeUrl) {
+        return false;
+    }
+
+    chrome.runtime.sendMessage({
+        type: "captureUrl",
+        url: safeUrl,
+        context: {
+            ...getPageContext(source),
+            ...extras
+        }
+    }).catch(() => { });
+
+    return true;
+}
+
+function pushCandidatesToBackground(source = "dom-scan") {
     const found = collectCandidates();
-    const context = getPageContext();
-
-    found.forEach((url) => {
-        chrome.runtime.sendMessage({ type: "captureUrl", url, context });
-    });
-
+    found.forEach((url) => pushUrl(url, source));
     return found;
 }
 
-pushCandidatesToBackground();
+function scheduleRescans() {
+    RESCAN_DELAYS_MS.forEach((delayMs) => {
+        window.setTimeout(() => {
+            pushCandidatesToBackground(delayMs === 0 ? "dom-initial" : "dom-delayed");
+        }, delayMs);
+    });
+}
+
+function startMutationObserver() {
+    if (observerStarted || !document.documentElement) {
+        return;
+    }
+
+    let queued = false;
+    const observer = new MutationObserver(() => {
+        if (queued) {
+            return;
+        }
+
+        queued = true;
+        window.setTimeout(() => {
+            queued = false;
+            pushCandidatesToBackground("dom-mutation");
+        }, 400);
+    });
+
+    observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["src", "href", "data-url", "data-src", "data-m3u8"]
+    });
+
+    observerStarted = true;
+}
+
+function injectPageHook() {
+    if (pageHookInjected || !document.documentElement) {
+        return;
+    }
+
+    const script = document.createElement("script");
+    script.src = chrome.runtime.getURL("page-hook.js");
+    script.async = false;
+    script.onload = () => script.remove();
+    (document.head || document.documentElement).appendChild(script);
+    pageHookInjected = true;
+}
+
+window.addEventListener(PAGE_HOOK_EVENT, (event) => {
+    const detail = event.detail || {};
+    if (detail.source !== PAGE_HOOK_SOURCE) {
+        return;
+    }
+
+    pushUrl(detail.url, detail.channel || "page-hook", {
+        method: detail.method || "",
+        initiator: detail.initiator || document.location.href
+    });
+});
+
+injectPageHook();
+scheduleRescans();
+startMutationObserver();
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "scanPage") {
-        const found = pushCandidatesToBackground();
-        const context = getPageContext();
-        sendResponse({ ok: true, found, context });
+    if (message?.type !== "scanPage") {
+        return undefined;
     }
+
+    const found = pushCandidatesToBackground("manual-scan");
+    sendResponse({ ok: true, found, context: getPageContext("manual-scan") });
+    return undefined;
 });

@@ -106,6 +106,7 @@
           <p class="lte-sidenav-label">Navigation</p>
           <ul>
             <li><button class="admin-nav-btn active" data-panel="dashboard">&#9632;&nbsp; Dashboard</button></li>
+            <li><button class="admin-nav-btn" data-panel="history">&#128214;&nbsp; Historique</button></li>
             <li><button class="admin-nav-btn" data-panel="profile">&#128100;&nbsp; Profil utilisateur</button></li>
             <li><button class="admin-nav-btn" data-panel="api">&#128273;&nbsp; API</button></li>
             <li><button class="admin-nav-btn" data-panel="settings">&#9881;&nbsp; Reglage</button></li>
@@ -203,6 +204,37 @@
           </div>
         </section>
 
+        <!-- PANEL: Historique -->
+        <section id="panel-history" data-admin-panel="history" class="hidden">
+          <div class="lte-page-header">
+            <h2>Historique des telechargements</h2>
+            <p class="lte-breadcrumb">Journal complet &rsaquo; Telechargements termines et en echec</p>
+          </div>
+
+          <div class="lte-card">
+            <div class="lte-card-header lte-card-header-row">
+              <h3>Historique recent</h3>
+              <span class="lte-card-meta">Icone 🛠 = mode fallback (transcodage)</span>
+            </div>
+            <div class="lte-card-body lte-card-body-flush">
+              <div class="table-wrap">
+                <table class="lte-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Utilisateur / IP</th>
+                      <th>Fichier</th>
+                      <th>Mode</th>
+                      <th>Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody id="historyTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- PANEL: Profil -->
         <section id="panel-profile" data-admin-panel="profile" class="hidden">
           <div class="lte-page-header">
@@ -286,6 +318,11 @@
                 <div class="form-group">
                   <label for="maxConcurrentDownloads">Limiteur de concurrence</label>
                   <input id="maxConcurrentDownloads" type="number" min="1" max="12" step="1" class="input-narrow" />
+                </div>
+                <div class="form-group">
+                  <label for="maxTitleLength">Longueur max du titre fichier</label>
+                  <input id="maxTitleLength" type="number" min="50" max="500" step="1" class="input-narrow" />
+                  <p class="form-desc">Definis la taille maximale du nom de fichier genere (50 a 500 caracteres).</p>
                 </div>
                 <button class="btn btn-primary" type="submit">Enregistrer</button>
               </form>

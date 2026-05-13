@@ -1,4 +1,9 @@
-const { downloadHlsToMp4 } = require("../services/ffmpeg.service");
+const { getSettings } = require("../services/admin-store.service");
+const {
+    downloadMediaToMp4,
+    getExpectedUrlHint,
+    isSupportedDownloadUrl
+} = require("../services/media-download.service");
 const {
     runDownloadJob,
     getJob,
@@ -6,16 +11,6 @@ const {
     getCapacitySnapshot
 } = require("../services/download-job.service");
 const { ensureDiskSpaceForDownload } = require("../services/storage-guard.service");
-
-function isValidHlsUrl(url) {
-    if (typeof url !== "string") {
-        return false;
-    }
-
-    const trimmed = url.trim();
-
-    return /^https?:\/\//i.test(trimmed) && /\.m3u8(\?.*)?$/i.test(trimmed);
-}
 
 function sanitizeString(value) {
     if (typeof value !== "string") {
@@ -38,30 +33,85 @@ function buildRequestHeaders(rawHeaders) {
     };
 }
 
-function buildPreferredName(value) {
-    return sanitizeString(value).slice(0, 160);
+function buildPreferredName(value, maxLength = 500) {
+    return sanitizeString(value).slice(0, maxLength);
 }
 
-function anonymizeIp(ipAddress) {
-    const value = sanitizeString(ipAddress);
+function getMaxTitleLengthSetting() {
+    const settings = getSettings();
+    const raw = Number.parseInt(settings.maxTitleLength, 10);
 
-    if (!value) {
-        return "unknown";
+    if (!Number.isFinite(raw)) {
+        return 500;
     }
 
-    if (value.includes(".")) {
-        const parts = value.split(".");
-        if (parts.length >= 4) {
-            return `${parts[0]}.${parts[1]}.${parts[2]}.0`;
+    return Math.min(500, Math.max(50, raw));
+}
+
+function normalizeIpCandidate(value) {
+    const raw = sanitizeString(value);
+
+    if (!raw) {
+        return "";
+    }
+
+    const first = raw.includes(",") ? raw.split(",")[0].trim() : raw;
+    return first.replace(/^::ffff:/i, "");
+}
+
+function isPrivateIpv4(ipAddress) {
+    return /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(ipAddress);
+}
+
+function isPrivateIpv6(ipAddress) {
+    const lower = ipAddress.toLowerCase();
+    return lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80:");
+}
+
+function isPublicIp(ipAddress) {
+    const value = normalizeIpCandidate(ipAddress);
+
+    if (!value) {
+        return false;
+    }
+
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) {
+        return !isPrivateIpv4(value);
+    }
+
+    if (/^[0-9a-f:]+$/i.test(value)) {
+        return !isPrivateIpv6(value);
+    }
+
+    return false;
+}
+
+function resolveClientIp(req) {
+    const headers = req.headers || {};
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+
+    const candidates = [
+        headers["x-client-public-ip"],
+        body.clientPublicIp,
+        headers["x-forwarded-for"],
+        headers["x-real-ip"],
+        req.ip
+    ];
+
+    for (const candidate of candidates) {
+        if (isPublicIp(candidate)) {
+            return normalizeIpCandidate(candidate);
         }
     }
 
-    if (value.includes(":")) {
-        const parts = value.split(":");
-        return `${parts.slice(0, 4).join(":")}:xxxx`;
+    for (const candidate of candidates) {
+        const normalized = normalizeIpCandidate(candidate);
+        if (normalized) {
+            return normalized;
+        }
     }
 
-    return value.length > 3 ? `${value.slice(0, 3)}***` : "unknown";
+    return "unknown";
 }
 
 function buildDownloadContext(req) {
@@ -70,7 +120,7 @@ function buildDownloadContext(req) {
     return {
         clientId: sanitizeString(headers["x-extension-id"] || headers["x-client-id"] || headers["x-user-id"]),
         userAgent: sanitizeString(headers["user-agent"]),
-        ipAddress: anonymizeIp(req.ip || headers["x-forwarded-for"] || headers["x-real-ip"])
+        ipAddress: resolveClientIp(req)
     };
 }
 
@@ -78,14 +128,15 @@ async function handleDownload(req, res) {
     try {
         const { url, headers, fileName } = req.body || {};
 
-        if (!isValidHlsUrl(url)) {
+        if (!isSupportedDownloadUrl(url)) {
             return res.status(400).json({
-                error: "URL invalide: attendu http(s)://...m3u8"
+                error: getExpectedUrlHint()
             });
         }
 
         const ffmpegHeaders = buildRequestHeaders(headers);
-        const preferredName = buildPreferredName(fileName);
+        const maxTitleLength = getMaxTitleLengthSetting();
+        const preferredName = buildPreferredName(fileName, maxTitleLength);
         const downloadContext = buildDownloadContext(req);
         const reusable = findCompletedDownload({
             url: url.trim(),
@@ -116,7 +167,11 @@ async function handleDownload(req, res) {
             });
         }
 
-        const result = await downloadHlsToMp4(url.trim(), ffmpegHeaders, {}, { preferredName, ...downloadContext });
+        const result = await downloadMediaToMp4(url.trim(), ffmpegHeaders, {}, {
+            preferredName,
+            maxTitleLength,
+            ...downloadContext
+        });
 
         return res.status(201).json({
             message: "Telechargement termine",
@@ -133,14 +188,15 @@ async function handleDownload(req, res) {
 function startDownload(req, res) {
     const { url, headers, fileName } = req.body || {};
 
-    if (!isValidHlsUrl(url)) {
+    if (!isSupportedDownloadUrl(url)) {
         return res.status(400).json({
-            error: "URL invalide: attendu http(s)://...m3u8"
+            error: getExpectedUrlHint()
         });
     }
 
     const ffmpegHeaders = buildRequestHeaders(headers);
-    const preferredName = buildPreferredName(fileName);
+    const maxTitleLength = getMaxTitleLengthSetting();
+    const preferredName = buildPreferredName(fileName, maxTitleLength);
     const downloadContext = buildDownloadContext(req);
 
     const diskCheck = ensureDiskSpaceForDownload();
@@ -160,6 +216,7 @@ function startDownload(req, res) {
         url: url.trim(),
         headers: ffmpegHeaders,
         preferredName,
+        maxTitleLength,
         ...downloadContext
     });
 
@@ -192,6 +249,7 @@ function getDownloadStatus(req, res) {
         message: job.message,
         fileName: job.fileName,
         filePath: job.filePath,
+        ffmpegMode: job.ffmpegMode || "",
         error: job.error
     });
 }

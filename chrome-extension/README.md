@@ -1,6 +1,6 @@
-# HLS URL Sender (Chrome Extension)
+# Video URL Sender (Chrome Extension)
 
-Extension Chrome Manifest V3 pour detecter des URLs `.m3u8` et les envoyer a l'API locale.
+Extension Chrome Manifest V3 pour detecter des URLs `.m3u8` ou `.mp4` et les envoyer a l'API locale.
 
 ## Installation rapide
 
@@ -15,12 +15,12 @@ Extension Chrome Manifest V3 pour detecter des URLs `.m3u8` et les envoyer a l'A
 2. Ouvrir la page contenant la video
 3. Ouvrir le popup de l'extension
 4. Cliquer `Detecter`
-5. Verifier/ajuster l'URL `.m3u8`
+5. Verifier/ajuster l'URL video detectee
 6. Cliquer `Envoyer`
 
 ## Fichiers
 
 - `manifest.json`: configuration extension MV3
-- `background.js`: capture des requetes reseau et stockage des URLs `.m3u8`
-- `content-script.js`: scan du DOM/page pour URLs `.m3u8`
+- `background.js`: capture des requetes reseau et stockage des URLs `.m3u8` ou `.mp4`
+- `content-script.js`: scan du DOM/page pour URLs `.m3u8` ou `.mp4`
 - `popup.html|css|js`: interface et appel vers le serveur

@@ -1,6 +1,6 @@
 const serverUrlInput = document.getElementById("serverUrl");
 const apiKeyInput = document.getElementById("apiKey");
-const hlsUrlInput = document.getElementById("hlsUrl");
+const mediaUrlInput = document.getElementById("mediaUrl");
 const videoNameInput = document.getElementById("videoName");
 const refererInput = document.getElementById("referer");
 const userAgentInput = document.getElementById("userAgent");
@@ -10,6 +10,9 @@ const sendBtn = document.getElementById("sendBtn");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const result = document.getElementById("result");
+const mediaUrlSection = document.getElementById("mediaUrlSection");
+const activeSection = document.getElementById("activeSection");
+const queueSection = document.getElementById("queueSection");
 
 const DEFAULT_SERVER_URL = "http://localhost:3000/api/download";
 const DEFAULT_API_KEY = "125456Aprt";
@@ -28,7 +31,7 @@ function normalizeVideoName(rawValue) {
         return "";
     }
 
-    return rawValue.replace(/\s+/g, " ").trim().slice(0, 160);
+    return rawValue.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
 function setResult(payload) {
@@ -56,6 +59,24 @@ function clearPolling() {
         clearInterval(activePoller);
         activePoller = null;
     }
+}
+
+function showSection(element, displayValue = "block") {
+    if (!element) {
+        return;
+    }
+
+    element.classList.remove("hidden-section");
+    element.style.display = displayValue;
+}
+
+function hideSection(element) {
+    if (!element) {
+        return;
+    }
+
+    element.classList.add("hidden-section");
+    element.style.display = "none";
 }
 
 function renderDownloadState(state) {
@@ -124,12 +145,12 @@ function renderActiveJobs(state) {
     countEl.textContent = String(active.length);
 
     if (active.length === 0) {
-        section.style.display = "none";
+        hideSection(section);
         listEl.innerHTML = "";
         return;
     }
 
-    section.style.display = "";
+    showSection(section);
     listEl.innerHTML = active.map((job) => {
         const name = job.fileName || job.jobId || "job";
         const progress = Number.isFinite(job.progress) ? Math.max(0, Math.min(100, Math.round(job.progress))) : 0;
@@ -157,12 +178,12 @@ function renderQueue(items) {
     countEl.textContent = items.length;
 
     if (items.length === 0) {
-        section.style.display = "none";
+        hideSection(section);
         listEl.innerHTML = "";
         return;
     }
 
-    section.style.display = "";
+    showSection(section);
     listEl.innerHTML = items.map((item, i) => {
         const name = item.body?.fileName || item.body?.url || `Item ${i + 1}`;
         return `<li class="queue-item">${escapeHtml(name)}</li>`;
@@ -231,8 +252,8 @@ async function detectFromBackground(tabId) {
             // Handle both old format (string) and new format (object)
             const urlEntry = typeof response.latest === 'string' ? { url: response.latest, context: {} } : response.latest;
 
-            hlsUrlInput.value = urlEntry.url || response.latest;
-            document.getElementById("hlsUrlSection").style.display = "";
+            mediaUrlInput.value = urlEntry.url || response.latest;
+            showSection(mediaUrlSection);
 
             // Auto-fill headers from captured context
             if (urlEntry.context?.referer) {
@@ -240,6 +261,9 @@ async function detectFromBackground(tabId) {
             }
             if (urlEntry.context?.userAgent) {
                 userAgentInput.value = urlEntry.context.userAgent;
+            }
+            if (urlEntry.context?.cookie) {
+                cookieInput.value = urlEntry.context.cookie;
             }
 
             return true;
@@ -276,8 +300,8 @@ async function detectFromPage(tabId) {
     }
 
     if (response?.found?.length) {
-        hlsUrlInput.value = response.found[0];
-        document.getElementById("hlsUrlSection").style.display = "";
+        mediaUrlInput.value = response.found[0];
+        showSection(mediaUrlSection);
 
         // Auto-fill referer from document context if available
         if (response.context?.referer) {
@@ -285,6 +309,9 @@ async function detectFromPage(tabId) {
         }
         if (response.context?.userAgent) {
             userAgentInput.value = response.context.userAgent;
+        }
+        if (response.context?.cookie) {
+            cookieInput.value = response.context.cookie;
         }
 
         return true;
@@ -317,7 +344,7 @@ async function autoDetect() {
         const fromPage = await detectFromPage(tab.id);
 
         if (!fromPage) {
-            setResult("Aucune URL .m3u8 detectee sur cette page. Recharge la page puis reclique sur Detecter.");
+            setResult("Aucune URL video prise en charge detectee sur cette page. Recharge la page puis reclique sur Detecter.");
         }
     } catch (error) {
         setResult(`Detection echouee: ${error.message}`);
@@ -327,14 +354,14 @@ async function autoDetect() {
 async function sendToServer() {
     const serverUrl = serverUrlInput.value.trim();
     const apiKey = apiKeyInput.value.trim();
-    const hlsUrl = hlsUrlInput.value.trim();
+    const mediaUrl = mediaUrlInput.value.trim();
     const videoName = normalizeVideoName(videoNameInput.value);
     const referer = refererInput.value.trim();
     const userAgent = userAgentInput.value.trim();
     const cookie = cookieInput.value.trim();
 
-    if (!serverUrl || !apiKey || !hlsUrl) {
-        setResult("Renseigne endpoint, API key et URL .m3u8.");
+    if (!serverUrl || !apiKey || !mediaUrl) {
+        setResult("Renseigne endpoint, API key et URL video.");
         return;
     }
 
@@ -348,7 +375,7 @@ async function sendToServer() {
                 serverUrl,
                 apiKey,
                 body: {
-                    url: hlsUrl,
+                    url: mediaUrl,
                     fileName: videoName,
                     headers: { referer, userAgent, cookie }
                 }

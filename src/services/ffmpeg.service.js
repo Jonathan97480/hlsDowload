@@ -2,57 +2,12 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const ffmpeg = require("fluent-ffmpeg");
-const { v4: uuidv4 } = require("uuid");
 const { getBestHlsUrl } = require("./hls-quality.service");
 const { findMasterM3U8 } = require("./master-detector.service");
+const { ensureDownloadsDir, createSafeOutputName } = require("./file-output.service");
 
 if (process.env.FFMPEG_PATH) {
     ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
-}
-
-function ensureDownloadsDir() {
-    const dirPath = path.resolve(__dirname, "../../downloads");
-
-    if (!fs.existsSync(dirPath)) {
-        fs.mkdirSync(dirPath, { recursive: true });
-    }
-
-    return dirPath;
-}
-
-function sanitizeBaseName(input) {
-    if (typeof input !== "string") {
-        return "";
-    }
-
-    const noExtension = input.replace(/\.mp4$/i, "").trim();
-    const normalized = noExtension
-        .normalize("NFKD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[<>:"/\\|?*\x00-\x1F]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-    const compact = normalized.replace(/[^a-zA-Z0-9 _.-]/g, "").trim();
-
-    if (!compact) {
-        return "";
-    }
-
-    return compact.slice(0, 100);
-}
-
-function createSafeOutputName(downloadsDir, preferredName = "") {
-    const safeBaseName = sanitizeBaseName(preferredName) || uuidv4();
-    let outputFileName = `${safeBaseName}.mp4`;
-    let index = 2;
-
-    while (fs.existsSync(path.join(downloadsDir, outputFileName))) {
-        outputFileName = `${safeBaseName}-${index}.mp4`;
-        index += 1;
-    }
-
-    return outputFileName;
 }
 
 function buildInputOptions(headers) {
@@ -200,7 +155,11 @@ function removeOutputIfExists(outputPath) {
 
 function downloadHlsToMp4(sourceUrl, headers = {}, hooks = {}, options = {}) {
     const downloadsDir = ensureDownloadsDir();
-    const outputFileName = createSafeOutputName(downloadsDir, options.preferredName || "");
+    const parsedMaxTitleLength = Number.parseInt(options.maxTitleLength, 10);
+    const maxTitleLength = Number.isFinite(parsedMaxTitleLength)
+        ? Math.min(500, Math.max(50, parsedMaxTitleLength))
+        : 500;
+    const outputFileName = createSafeOutputName(downloadsDir, options.preferredName || "", maxTitleLength);
     const outputPath = path.join(downloadsDir, outputFileName);
     const inputOptions = buildInputOptions(headers);
 
