@@ -44,6 +44,10 @@ Les services contiennent toute la logique métier (calculs, appels FFmpeg).
 
 Gestion d'erreurs : Chaque promesse doit avoir un bloc .catch ou un try/catch pour éviter de faire planter le serveur.
 
+Règle CSS : Le style doit être placé dans des fichiers `.css` dédiés (ex: `public/admin.css`). Ne pas mélanger le CSS avec le JavaScript ni garder de blocs de style inline dans les pages HTML, sauf exception technique justifiée.
+
+Règle JS : Le JavaScript doit être placé dans des fichiers `.js` dédiés. Ne jamais écrire de blocs `<script>` avec du code directement dans une page HTML. Les balises `<script src="...">` pour charger un fichier externe sont autorisées.
+
 🔐 Sécurité de l'API
 Pour protéger ton serveur contre les utilisations non autorisées (même chez toi) :
 

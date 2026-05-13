@@ -17,6 +17,8 @@
   - `controllers/`: orchestration HTTP uniquement.
   - `services/`: logique metier, traitement FFmpeg.
 - Encadrer les promesses/appels async avec gestion d'erreur (`try/catch` ou `.catch`).
+- **CSS dedié** : tout le style dans des fichiers `.css` (ex: `public/admin.css`); aucun bloc `<style>` ni style inline dans le HTML.
+- **JS dedié** : tout le code JavaScript dans des fichiers `.js`; aucun bloc `<script>` avec du code inline dans le HTML. Seuls les `<script src="...">` sont autorises.
 
 ## Exigences securite API
 

@@ -8,6 +8,7 @@ const {
     jobs,
     login,
     logout,
+    profile,
     session,
     settings,
     setup
@@ -24,6 +25,7 @@ router.get("/admin/dashboard", requireAdminSession, dashboard);
 router.get("/admin/dashboard/stream", requireAdminSession, dashboardStream);
 router.get("/admin/jobs", requireAdminSession, jobs);
 router.patch("/admin/settings", requireAdminSession, settings);
+router.patch("/admin/profile", requireAdminSession, profile);
 router.post("/admin/api-key/rotate", requireAdminSession, apiKeyRotate);
 
 module.exports = router;

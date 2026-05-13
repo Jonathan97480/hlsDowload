@@ -278,6 +278,46 @@ function updateSettings(patch = {}) {
     return nextSettings;
 }
 
+function updateAdminProfile(patch = {}) {
+    pruneExpiredSessions();
+    const admin = getAdminRow();
+
+    if (!admin) {
+        throw new Error("Compte administrateur introuvable.");
+    }
+
+    const hasEmail = typeof patch.email === "string";
+    const hasNewPassword = typeof patch.newPassword === "string" && patch.newPassword.length > 0;
+
+    if (!hasEmail && !hasNewPassword) {
+        throw new Error("Aucune modification de profil detectee.");
+    }
+
+    const nextEmail = hasEmail ? normalizeEmail(patch.email) : (admin.email || "");
+    let nextPasswordHash = admin.password_hash;
+
+    if (hasNewPassword) {
+        if (!verifyPassword(patch.currentPassword, admin.password_hash)) {
+            throw new Error("Le mot de passe actuel est invalide.");
+        }
+
+        const strengthError = validatePasswordStrength(patch.newPassword);
+        if (strengthError) {
+            throw new Error(strengthError);
+        }
+
+        nextPasswordHash = hashPassword(patch.newPassword);
+    }
+
+    db.prepare(`
+        UPDATE admins
+        SET email = ?, password_hash = ?, updated_at = ?
+        WHERE id = 1
+    `).run(nextEmail, nextPasswordHash, Date.now());
+
+    return getAdminProfile();
+}
+
 function generateApiKey() {
     return crypto.randomUUID();
 }
@@ -302,6 +342,7 @@ module.exports = {
     rotateApiKey,
     setActiveApiKey,
     setInitialAdmin,
+    updateAdminProfile,
     updateSettings,
     validateSetupToken
 };

@@ -190,7 +190,22 @@ function getJob(jobId) {
 }
 
 function getJobsSnapshot() {
-    return Array.from(jobs.values())
+    const persistedRows = db.prepare(`
+        SELECT * FROM jobs
+        ORDER BY updated_at DESC
+        LIMIT 200
+    `).all();
+
+    const merged = new Map(persistedRows.map((row) => {
+        const job = rowToJob(row);
+        return [job.jobId, job];
+    }));
+
+    for (const memoryJob of jobs.values()) {
+        merged.set(memoryJob.jobId, memoryJob);
+    }
+
+    return Array.from(merged.values())
         .sort((left, right) => right.updatedAt - left.updatedAt)
         .slice(0, 100);
 }

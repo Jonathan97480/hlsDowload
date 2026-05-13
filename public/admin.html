@@ -4,228 +4,297 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin HLS Downloader</title>
-    <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
-    <style>
-      :root {
-        color-scheme: dark;
-      }
-      body {
-        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
-        background:
-          radial-gradient(circle at top left, rgba(15, 118, 110, 0.35), transparent 28%),
-          radial-gradient(circle at top right, rgba(59, 130, 246, 0.22), transparent 24%),
-          linear-gradient(180deg, #020617 0%, #0f172a 55%, #111827 100%);
-      }
-      .glass {
-        background: rgba(15, 23, 42, 0.72);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(148, 163, 184, 0.18);
-        box-shadow: 0 24px 80px rgba(2, 6, 23, 0.45);
-      }
-      .panel {
-        border-radius: 24px;
-      }
-      .status-pill {
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-      .table-wrap::-webkit-scrollbar {
-        height: 8px;
-      }
-      .table-wrap::-webkit-scrollbar-thumb {
-        background: rgba(148, 163, 184, 0.35);
-        border-radius: 999px;
-      }
-      .password-field {
-        position: relative;
-      }
-      .password-toggle {
-        position: absolute;
-        top: 50%;
-        right: 0.85rem;
-        transform: translateY(-50%);
-        border: none;
-        background: transparent;
-        color: #94a3b8;
-        cursor: pointer;
-        font-size: 1rem;
-      }
-    </style>
+    <link rel="stylesheet" href="/admin.css" />
   </head>
-  <body class="min-h-screen text-slate-100">
-    <section id="authScreen" class="mx-auto flex min-h-screen max-w-2xl items-center p-4 md:p-8">
-      <div class="glass panel w-full p-5 md:p-8">
-        <div>
-          <p class="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300">Console admin</p>
-          <h1 class="mt-2 text-3xl font-black tracking-tight md:text-4xl">Connexion administrateur</h1>
-          <p class="mt-2 text-sm text-slate-300">L'acces au tableau de bord est bloque tant que les bons identifiants ne sont pas fournis.</p>
+  <body>
+
+    <!-- ======= CONNEXION ======= -->
+    <section id="authScreen" class="auth-screen">
+      <div class="auth-card">
+        <div class="auth-header">
+          <h1>&#9654; HLS Downloader</h1>
+          <p>Panneau d'administration</p>
         </div>
-        <p id="bootstrapHint" class="mt-5 text-sm text-slate-300">Chargement du contexte...</p>
-
-        <form id="loginForm" class="mt-6 space-y-4">
-          <div>
-            <label class="mb-2 block text-sm font-semibold text-slate-200" for="loginUsername">Pseudo</label>
-            <input id="loginUsername" class="w-full rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100 outline-none transition focus:border-cyan-400" type="text" autocomplete="username" placeholder="admin" />
-          </div>
-          <div>
-            <label class="mb-2 block text-sm font-semibold text-slate-200" for="loginPassword">Mot de passe</label>
-            <div class="password-field">
-              <input id="loginPassword" class="w-full rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 pr-12 text-slate-100 outline-none transition focus:border-cyan-400" type="password" autocomplete="current-password" placeholder="Mot de passe" />
-              <button class="password-toggle" type="button" data-toggle-password="loginPassword" aria-label="Afficher le mot de passe">👁</button>
+        <div class="auth-body">
+          <p class="auth-label">Console admin</p>
+          <h2>Connexion administrateur</h2>
+          <p class="auth-desc">L'acces au tableau de bord est bloque tant que les bons identifiants ne sont pas fournis.</p>
+          <p id="bootstrapHint" class="auth-hint">Chargement du contexte...</p>
+          <form id="loginForm" class="auth-form">
+            <div class="form-group">
+              <label for="loginUsername">Pseudo</label>
+              <input id="loginUsername" type="text" autocomplete="username" placeholder="admin" />
             </div>
-          </div>
-          <button class="w-full rounded-2xl bg-cyan-500 px-4 py-3 font-bold text-slate-950 transition hover:bg-cyan-400" type="submit">Se connecter</button>
-        </form>
-
-        <p id="authMessage" class="mt-4 rounded-2xl border border-slate-700 bg-slate-950/45 px-4 py-3 text-sm text-slate-300">En attente...</p>
+            <div class="form-group">
+              <label for="loginPassword">Mot de passe</label>
+              <div class="password-field">
+                <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Mot de passe" />
+                <button class="password-toggle" type="button" data-toggle-password="loginPassword" aria-label="Afficher le mot de passe">&#128065;</button>
+              </div>
+            </div>
+            <button class="btn btn-primary btn-block" type="submit">Se connecter</button>
+          </form>
+          <p id="authMessage" class="auth-message">En attente...</p>
+        </div>
       </div>
     </section>
 
-    <section id="setupScreen" class="mx-auto hidden min-h-screen max-w-2xl items-center p-4 md:p-8">
-      <div class="glass panel w-full p-5 md:p-8">
-        <div>
-          <p class="text-xs font-semibold uppercase tracking-[0.35em] text-emerald-300">Premiere connexion</p>
-          <h1 class="mt-2 text-3xl font-black tracking-tight md:text-4xl">Configuration du compte admin</h1>
-          <p class="mt-2 text-sm text-slate-300">Definis ici le pseudo, le mot de passe et l'email optionnel du compte administrateur.</p>
+    <!-- ======= SETUP ======= -->
+    <section id="setupScreen" class="auth-screen hidden">
+      <div class="auth-card">
+        <div class="auth-header auth-header-green">
+          <h1>&#9654; HLS Downloader</h1>
+          <p>Premiere connexion</p>
         </div>
-
-        <p id="setupHint" class="mt-5 text-sm text-slate-300">Configuration initiale requise.</p>
-
-        <form id="setupForm" class="mt-6 space-y-4">
-          <div>
-            <label class="mb-2 block text-sm font-semibold text-slate-200" for="setupUsername">Pseudo administrateur</label>
-            <input id="setupUsername" class="w-full rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100 outline-none transition focus:border-emerald-400" type="text" placeholder="Votre pseudo" />
-          </div>
-          <div>
-            <label class="mb-2 block text-sm font-semibold text-slate-200" for="setupEmail">Email (optionnel)</label>
-            <input id="setupEmail" class="w-full rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100 outline-none transition focus:border-emerald-400" type="email" placeholder="admin@example.com" />
-          </div>
-          <div>
-            <label class="mb-2 block text-sm font-semibold text-slate-200" for="setupPassword">Nouveau mot de passe</label>
-            <div class="password-field">
-              <input id="setupPassword" class="w-full rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 pr-12 text-slate-100 outline-none transition focus:border-emerald-400" type="password" autocomplete="new-password" placeholder="Mot de passe fort" />
-              <button class="password-toggle" type="button" data-toggle-password="setupPassword" aria-label="Afficher le nouveau mot de passe">👁</button>
+        <div class="auth-body">
+          <p class="auth-label auth-label-green">Premiere connexion</p>
+          <h2>Configuration du compte admin</h2>
+          <p class="auth-desc">Definis ici le pseudo, le mot de passe et l'email optionnel du compte administrateur.</p>
+          <p id="setupHint" class="auth-hint">Configuration initiale requise.</p>
+          <form id="setupForm" class="auth-form">
+            <div class="form-group">
+              <label for="setupUsername">Pseudo administrateur</label>
+              <input id="setupUsername" type="text" placeholder="Votre pseudo" />
             </div>
-          </div>
-          <div>
-            <label class="mb-2 block text-sm font-semibold text-slate-200" for="setupPasswordConfirm">Confirmer le mot de passe</label>
-            <div class="password-field">
-              <input id="setupPasswordConfirm" class="w-full rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 pr-12 text-slate-100 outline-none transition focus:border-emerald-400" type="password" autocomplete="new-password" placeholder="Confirmez le mot de passe" />
-              <button class="password-toggle" type="button" data-toggle-password="setupPasswordConfirm" aria-label="Afficher la confirmation du mot de passe">👁</button>
+            <div class="form-group">
+              <label for="setupEmail">Email (optionnel)</label>
+              <input id="setupEmail" type="email" placeholder="admin@example.com" />
             </div>
-          </div>
-          <button id="backToLoginBtn" class="w-full rounded-2xl border border-slate-600 bg-slate-950/45 px-4 py-3 font-semibold text-slate-100 transition hover:border-slate-400 hover:text-white" type="button">Retour a la connexion</button>
-          <button class="w-full rounded-2xl bg-emerald-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-emerald-300" type="submit">Finaliser la premiere connexion</button>
-        </form>
-
-        <p id="setupMessage" class="mt-4 rounded-2xl border border-slate-700 bg-slate-950/45 px-4 py-3 text-sm text-slate-300">En attente...</p>
+            <div class="form-group">
+              <label for="setupPassword">Nouveau mot de passe</label>
+              <div class="password-field">
+                <input id="setupPassword" type="password" autocomplete="new-password" placeholder="Mot de passe fort" />
+                <button class="password-toggle" type="button" data-toggle-password="setupPassword" aria-label="Afficher le nouveau mot de passe">&#128065;</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="setupPasswordConfirm">Confirmer le mot de passe</label>
+              <div class="password-field">
+                <input id="setupPasswordConfirm" type="password" autocomplete="new-password" placeholder="Confirmez le mot de passe" />
+                <button class="password-toggle" type="button" data-toggle-password="setupPasswordConfirm" aria-label="Afficher la confirmation">&#128065;</button>
+              </div>
+            </div>
+            <button id="backToLoginBtn" class="btn btn-default btn-block" type="button">Retour a la connexion</button>
+            <button class="btn btn-success btn-block" type="submit">Finaliser la premiere connexion</button>
+          </form>
+          <p id="setupMessage" class="auth-message">En attente...</p>
+        </div>
       </div>
     </section>
 
-    <main id="dashboardScreen" class="mx-auto hidden min-h-screen max-w-7xl flex-col gap-6 p-4 md:p-8">
-      <header class="glass panel flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p class="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300">Console admin</p>
-          <h1 class="mt-2 text-3xl font-black tracking-tight md:text-4xl">Supervision du serveur HLS</h1>
-          <p class="mt-2 max-w-2xl text-sm text-slate-300">Etat du moteur, charge serveur, historique des telechargements, concurrence et rotation de cle API.</p>
+    <!-- ======= DASHBOARD ======= -->
+    <div id="dashboardScreen" class="lte-wrapper hidden">
+
+      <nav class="lte-navbar">
+        <span class="lte-navbar-brand">&#9654; HLS Admin</span>
+        <div class="lte-navbar-right">
+          <span class="lte-navbar-user">&#128100;&nbsp;<span id="navbarUsername">Admin</span></span>
+          <button id="logoutBtn" class="lte-navbar-btn" type="button">Deconnexion</button>
         </div>
-        <div class="grid gap-3 sm:grid-cols-3">
-          <div class="rounded-2xl border border-slate-700/80 bg-slate-950/45 px-4 py-3">
-            <p class="text-xs uppercase text-slate-400">Serveur</p>
-            <p id="serverStatus" class="mt-1 text-lg font-bold text-emerald-300">Chargement...</p>
-          </div>
-          <div class="rounded-2xl border border-slate-700/80 bg-slate-950/45 px-4 py-3">
-            <p class="text-xs uppercase text-slate-400">CPU / RAM</p>
-            <p id="cpuRamValue" class="mt-1 text-lg font-bold text-sky-300">--</p>
-          </div>
-          <div class="rounded-2xl border border-slate-700/80 bg-slate-950/45 px-4 py-3">
-            <p class="text-xs uppercase text-slate-400">Actifs</p>
-            <p id="activeJobsValue" class="mt-1 text-lg font-bold text-amber-300">--</p>
+      </nav>
+
+      <aside class="lte-sidebar">
+        <div class="lte-user-panel">
+          <div class="lte-user-avatar">&#128100;</div>
+          <div class="lte-user-info">
+            <strong id="sidebarUsername">Admin</strong>
+            <span class="lte-user-status">&#9679; En ligne</span>
           </div>
         </div>
-      </header>
+        <nav class="lte-sidenav">
+          <p class="lte-sidenav-label">Navigation</p>
+          <ul>
+            <li><button class="admin-nav-btn active" data-panel="dashboard">&#9632;&nbsp; Dashboard</button></li>
+            <li><button class="admin-nav-btn" data-panel="profile">&#128100;&nbsp; Profil utilisateur</button></li>
+            <li><button class="admin-nav-btn" data-panel="api">&#128273;&nbsp; API</button></li>
+            <li><button class="admin-nav-btn" data-panel="settings">&#9881;&nbsp; Reglage</button></li>
+          </ul>
+        </nav>
+      </aside>
 
-      <section class="grid gap-6 xl:grid-cols-[1.4fr_0.75fr]">
-        <div class="space-y-6">
-          <div class="grid gap-4 md:grid-cols-3">
-            <article class="glass panel p-5">
-              <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Debit estime</p>
-              <p id="avgBandwidthValue" class="mt-3 text-3xl font-black text-cyan-300">--</p>
-              <p class="mt-2 text-sm text-slate-300">Estimation a partir des fichiers finalises.</p>
-            </article>
-            <article class="glass panel p-5">
-              <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Temps moyen</p>
-              <p id="avgProcessingValue" class="mt-3 text-3xl font-black text-fuchsia-300">--</p>
-              <p class="mt-2 text-sm text-slate-300">Duree moyenne de traitement par job.</p>
-              <div class="mt-4 h-28">
-                <canvas id="avgGaugeChart"></canvas>
-              </div>
-            </article>
-            <article class="glass panel p-5">
-              <p class="text-xs uppercase tracking-[0.3em] text-slate-400">File</p>
-              <p id="queueValue" class="mt-3 text-3xl font-black text-emerald-300">--</p>
-              <p class="mt-2 text-sm text-slate-300">Taches en attente ou en cours.</p>
-            </article>
+      <div class="lte-content-wrapper">
+
+        <!-- PANEL: Dashboard -->
+        <section id="panel-dashboard" data-admin-panel="dashboard">
+          <div class="lte-page-header">
+            <h2>Dashboard</h2>
+            <p class="lte-breadcrumb">Supervision du serveur HLS &rsaquo; Etat temps reel</p>
           </div>
 
-          <section class="glass panel p-5 md:p-6">
-            <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-              <div>
-                <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Statistiques</p>
-                <h2 class="text-2xl font-bold">Graphique de charge reseau</h2>
+          <div class="lte-stat-row">
+            <div class="lte-stat-box lte-stat-teal">
+              <div class="lte-stat-inner">
+                <p id="serverStatus" class="lte-stat-value">--</p>
+                <p class="lte-stat-label">Statut serveur</p>
               </div>
-              <p class="text-sm text-slate-300">Fenetre glissante de 12 heures.</p>
+              <div class="lte-stat-icon">&#9889;</div>
+              <span class="lte-stat-footer" id="cpuRamValue">CPU / RAM</span>
             </div>
-            <div class="mt-5">
-              <canvas id="bandwidthChart" height="110"></canvas>
+            <div class="lte-stat-box lte-stat-green">
+              <div class="lte-stat-inner">
+                <p id="activeJobsValue" class="lte-stat-value">--</p>
+                <p class="lte-stat-label">Telechargements actifs</p>
+              </div>
+              <div class="lte-stat-icon">&#8595;</div>
+              <span class="lte-stat-footer" id="queueValue">File d'attente</span>
             </div>
-          </section>
+            <div class="lte-stat-box lte-stat-orange">
+              <div class="lte-stat-inner">
+                <p id="avgBandwidthValue" class="lte-stat-value">--</p>
+                <p class="lte-stat-label">Debit estime</p>
+              </div>
+              <div class="lte-stat-icon">&#128225;</div>
+              <span class="lte-stat-footer">Estimation fichiers finalises</span>
+            </div>
+            <div class="lte-stat-box lte-stat-red">
+              <div class="lte-stat-inner">
+                <p id="avgProcessingValue" class="lte-stat-value">--</p>
+                <p class="lte-stat-label">Temps moyen</p>
+              </div>
+              <div class="lte-stat-icon">&#128336;</div>
+              <span class="lte-stat-footer">Duree moyenne de traitement</span>
+            </div>
+          </div>
 
-          <section class="glass panel p-5 md:p-6">
-            <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-              <div>
-                <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Journal</p>
-                <h2 class="text-2xl font-bold">Telechargements recents</h2>
+          <div class="lte-row">
+            <div class="lte-card">
+              <div class="lte-card-header">
+                <h3>Graphique de charge reseau</h3>
+                <p class="lte-card-subtitle">Fenetre glissante de 12 heures</p>
               </div>
-              <p id="lastRefresh" class="text-sm text-slate-300">--</p>
+              <div class="lte-card-body">
+                <canvas id="bandwidthChart" height="110"></canvas>
+              </div>
             </div>
-            <div class="table-wrap mt-5 overflow-x-auto rounded-2xl border border-slate-700/80">
-              <table class="min-w-full divide-y divide-slate-700 text-left text-sm">
-                <thead class="bg-slate-950/70 text-slate-300">
-                  <tr>
-                    <th class="px-4 py-3">Utilisateur</th>
-                    <th class="px-4 py-3">Fichier & Qualite</th>
-                    <th class="px-4 py-3">Performance</th>
-                    <th class="px-4 py-3">Statut</th>
-                  </tr>
-                </thead>
-                <tbody id="jobsTableBody" class="divide-y divide-slate-800 bg-slate-950/40"></tbody>
-              </table>
+            <div class="lte-card">
+              <div class="lte-card-header">
+                <h3>Temps moyen</h3>
+                <p class="lte-card-subtitle">Duree de traitement</p>
+              </div>
+              <div class="lte-card-body">
+                <div class="lte-gauge-wrap">
+                  <canvas id="avgGaugeChart"></canvas>
+                </div>
+              </div>
             </div>
-          </section>
-        </div>
+          </div>
 
-        <aside class="space-y-6">
-          <section class="glass panel p-5 md:p-6">
-            <p class="text-xs uppercase tracking-[0.3em] text-slate-400">Configuration</p>
-            <h2 class="mt-2 text-2xl font-bold">Concurrence et cle API</h2>
-            <form id="settingsForm" class="mt-5 space-y-4">
-              <div>
-                <label class="mb-2 block text-sm font-semibold text-slate-200" for="maxConcurrentDownloads">Limiteur de concurrence</label>
-                <input id="maxConcurrentDownloads" class="w-full rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-100 outline-none transition focus:border-fuchsia-400" type="number" min="1" max="12" step="1" />
-              </div>
-              <button class="w-full rounded-2xl bg-fuchsia-500 px-4 py-3 font-bold text-white transition hover:bg-fuchsia-400" type="submit">Enregistrer</button>
-            </form>
-            <div class="mt-5 space-y-3">
-              <button id="rotateApiKeyBtn" class="w-full rounded-2xl border border-slate-600 bg-slate-950/45 px-4 py-3 font-semibold text-slate-100 transition hover:border-amber-300 hover:text-amber-200" type="button">Generer une nouvelle cle API</button>
-              <button id="logoutBtn" class="w-full rounded-2xl border border-slate-600 bg-slate-950/45 px-4 py-3 font-semibold text-slate-100 transition hover:border-rose-300 hover:text-rose-200" type="button">Deconnexion</button>
-              <div id="apiKeyReveal" class="hidden rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm text-amber-100"></div>
+          <div class="lte-card">
+            <div class="lte-card-header lte-card-header-row">
+              <h3>Telechargements recents</h3>
+              <span id="lastRefresh" class="lte-card-meta">--</span>
             </div>
-          </section>
-        </aside>
-      </section>
-    </main>
+            <div class="lte-card-body lte-card-body-flush">
+              <div class="table-wrap">
+                <table class="lte-table">
+                  <thead>
+                    <tr>
+                      <th>Utilisateur</th>
+                      <th>Fichier &amp; Qualite</th>
+                      <th>Performance</th>
+                      <th>Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody id="jobsTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- PANEL: Profil -->
+        <section id="panel-profile" data-admin-panel="profile" class="hidden">
+          <div class="lte-page-header">
+            <h2>Profil utilisateur</h2>
+            <p class="lte-breadcrumb">Compte administrateur &rsaquo; Modifier</p>
+          </div>
+          <div class="lte-card lte-card-narrow">
+            <div class="lte-card-header">
+              <h3>Modifier le profil</h3>
+            </div>
+            <div class="lte-card-body">
+              <form id="profileForm" class="lte-form">
+                <div class="form-group">
+                  <label for="profileUsername">Pseudo</label>
+                  <input id="profileUsername" type="text" readonly class="input-readonly" />
+                </div>
+                <div class="form-group">
+                  <label for="profileEmail">Email</label>
+                  <input id="profileEmail" type="email" placeholder="admin@example.com" />
+                </div>
+                <hr class="lte-divider" />
+                <div class="form-group">
+                  <label for="profileCurrentPassword">Mot de passe actuel <span class="text-muted">(requis pour changer le mot de passe)</span></label>
+                  <div class="password-field">
+                    <input id="profileCurrentPassword" type="password" autocomplete="current-password" placeholder="Mot de passe actuel" />
+                    <button class="password-toggle" type="button" data-toggle-password="profileCurrentPassword" aria-label="Afficher le mot de passe actuel">&#128065;</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="profileNewPassword">Nouveau mot de passe</label>
+                  <div class="password-field">
+                    <input id="profileNewPassword" type="password" autocomplete="new-password" placeholder="Nouveau mot de passe" />
+                    <button class="password-toggle" type="button" data-toggle-password="profileNewPassword" aria-label="Afficher le nouveau mot de passe">&#128065;</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="profileConfirmPassword">Confirmer le nouveau mot de passe</label>
+                  <div class="password-field">
+                    <input id="profileConfirmPassword" type="password" autocomplete="new-password" placeholder="Confirmer le mot de passe" />
+                    <button class="password-toggle" type="button" data-toggle-password="profileConfirmPassword" aria-label="Afficher la confirmation">&#128065;</button>
+                  </div>
+                </div>
+                <button class="btn btn-primary" type="submit">Enregistrer le profil</button>
+              </form>
+              <p id="profileMessage" class="form-message">Aucune modification pour le moment.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- PANEL: API -->
+        <section id="panel-api" data-admin-panel="api" class="hidden">
+          <div class="lte-page-header">
+            <h2>API</h2>
+            <p class="lte-breadcrumb">Gestion de la cle API</p>
+          </div>
+          <div class="lte-card lte-card-narrow">
+            <div class="lte-card-header">
+              <h3>Cle API</h3>
+            </div>
+            <div class="lte-card-body">
+              <p class="form-desc">Genere une nouvelle cle API. Elle est affichee une seule fois &mdash; note-la immediatement.</p>
+              <button id="rotateApiKeyBtn" class="btn btn-warning" type="button">Generer une nouvelle cle API</button>
+              <div id="apiKeyReveal" class="hidden apikey-reveal"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- PANEL: Reglage -->
+        <section id="panel-settings" data-admin-panel="settings" class="hidden">
+          <div class="lte-page-header">
+            <h2>Reglage</h2>
+            <p class="lte-breadcrumb">Parametres du serveur</p>
+          </div>
+          <div class="lte-card lte-card-narrow">
+            <div class="lte-card-header">
+              <h3>Concurrence des telechargements</h3>
+            </div>
+            <div class="lte-card-body">
+              <p class="form-desc">Definis le nombre maximum de telechargements en parallele (1 a 12).</p>
+              <form id="settingsForm" class="lte-form">
+                <div class="form-group">
+                  <label for="maxConcurrentDownloads">Limiteur de concurrence</label>
+                  <input id="maxConcurrentDownloads" type="number" min="1" max="12" step="1" class="input-narrow" />
+                </div>
+                <button class="btn btn-primary" type="submit">Enregistrer</button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
 
     <script src="/admin-charts.js"></script>
     <script src="/admin-logic.js"></script>

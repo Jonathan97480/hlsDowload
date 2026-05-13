@@ -3,11 +3,11 @@ let gaugeChartInstance = null;
 
 function buildChartColors() {
     return {
-        grid: "rgba(148, 163, 184, 0.18)",
-        text: "rgba(226, 232, 240, 0.95)",
-        primary: "rgba(34, 211, 238, 1)",
-        primaryFill: "rgba(34, 211, 238, 0.18)",
-        secondary: "rgba(168, 85, 247, 1)"
+        grid: "rgba(0, 0, 0, 0.08)",
+        text: "rgba(68, 68, 68, 0.9)",
+        primary: "#3c8dbc",
+        primaryFill: "rgba(60, 141, 188, 0.15)",
+        secondary: "#f39c12"
     };
 }
 

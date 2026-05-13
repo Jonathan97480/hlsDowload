@@ -10,9 +10,14 @@ const {
     revokeSession,
     rotateApiKey,
     setInitialAdmin,
+    updateAdminProfile,
     updateSettings,
     validateSetupToken
 } = require("../services/admin-store.service");
+
+function readSessionToken(req) {
+    return (req.headers.cookie || "").split("admin_session=")[1]?.split(";")[0] || "";
+}
 
 function setSessionCookie(res, token) {
     res.setHeader("Set-Cookie", [
@@ -79,7 +84,7 @@ function setup(req, res) {
 }
 
 function session(req, res) {
-    const token = (req.headers.cookie || "").split("admin_session=")[1]?.split(";")[0];
+    const token = readSessionToken(req);
     const currentSession = getSession(token ? decodeURIComponent(token) : "");
 
     if (!currentSession) {
@@ -90,11 +95,33 @@ function session(req, res) {
 }
 
 function logout(req, res) {
-    const token = (req.headers.cookie || "").split("admin_session=")[1]?.split(";")[0];
+    const token = readSessionToken(req);
     revokeSession(token ? decodeURIComponent(token) : "");
     clearSessionCookie(res);
 
     return res.status(200).json({ message: "Deconnexion effectuee." });
+}
+
+function profile(req, res) {
+    const token = readSessionToken(req);
+
+    try {
+        const user = updateAdminProfile(req.body || {});
+
+        if (token) {
+            revokeSession(decodeURIComponent(token));
+        }
+
+        const nextSession = createSession(user);
+        setSessionCookie(res, nextSession.token);
+
+        return res.status(200).json({
+            message: "Profil administrateur mis a jour.",
+            user
+        });
+    } catch (error) {
+        return res.status(400).json({ error: error.message || "Impossible de mettre a jour le profil." });
+    }
 }
 
 function dashboard(_req, res) {
@@ -200,6 +227,7 @@ module.exports = {
     jobs,
     login,
     logout,
+    profile,
     session,
     settings,
     setup

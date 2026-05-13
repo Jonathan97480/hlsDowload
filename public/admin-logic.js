@@ -1,21 +1,30 @@
 const loginForm = document.getElementById("loginForm");
 const setupForm = document.getElementById("setupForm");
 const settingsForm = document.getElementById("settingsForm");
+const profileForm = document.getElementById("profileForm");
 const rotateApiKeyBtn = document.getElementById("rotateApiKeyBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 const authMessage = document.getElementById("authMessage");
+const profileMessage = document.getElementById("profileMessage");
 const bootstrapHint = document.getElementById("bootstrapHint");
 const setupHint = document.getElementById("setupHint");
 const jobsTableBody = document.getElementById("jobsTableBody");
 const bandwidthCanvas = document.getElementById("bandwidthChart");
 const maxConcurrentDownloadsInput = document.getElementById("maxConcurrentDownloads");
 const apiKeyReveal = document.getElementById("apiKeyReveal");
+const profileUsernameInput = document.getElementById("profileUsername");
+const profileEmailInput = document.getElementById("profileEmail");
+const profileCurrentPasswordInput = document.getElementById("profileCurrentPassword");
+const profileNewPasswordInput = document.getElementById("profileNewPassword");
+const profileConfirmPasswordInput = document.getElementById("profileConfirmPassword");
 const authScreen = document.getElementById("authScreen");
 const setupScreen = document.getElementById("setupScreen");
 const dashboardScreen = document.getElementById("dashboardScreen");
 const setupMessage = document.getElementById("setupMessage");
 const backToLoginBtn = document.getElementById("backToLoginBtn");
 const passwordToggleButtons = Array.from(document.querySelectorAll("[data-toggle-password]"));
+const adminNavButtons = Array.from(document.querySelectorAll(".admin-nav-btn"));
+const adminPanels = Array.from(document.querySelectorAll("[data-admin-panel]"));
 
 const serverStatus = document.getElementById("serverStatus");
 const cpuRamValue = document.getElementById("cpuRamValue");
@@ -30,10 +39,6 @@ let setupToken = "";
 let dashboardRefreshTimer = null;
 let dashboardStream = null;
 let dashboardStreamHasData = false;
-
-function hasAdminSessionCookie() {
-    return document.cookie.split(";").some((part) => part.trim().startsWith("admin_session="));
-}
 
 function formatDuration(ms) {
     if (!ms || ms <= 0) {
@@ -62,36 +67,21 @@ function formatMemory(data) {
 
 function setMessage(message, tone = "info") {
     authMessage.textContent = message;
-    authMessage.className = "mt-4 rounded-2xl border px-4 py-3 text-sm";
-
-    if (tone === "error") {
-        authMessage.classList.add("border-rose-400/40", "bg-rose-400/10", "text-rose-100");
-        return;
-    }
-
-    if (tone === "success") {
-        authMessage.classList.add("border-emerald-400/40", "bg-emerald-400/10", "text-emerald-100");
-        return;
-    }
-
-    authMessage.classList.add("border-slate-700", "bg-slate-950/45", "text-slate-300");
+    authMessage.className = `auth-message auth-message--${tone}`;
 }
 
 function setSetupMessage(message, tone = "info") {
     setupMessage.textContent = message;
-    setupMessage.className = "mt-4 rounded-2xl border px-4 py-3 text-sm";
+    setupMessage.className = `auth-message auth-message--${tone}`;
+}
 
-    if (tone === "error") {
-        setupMessage.classList.add("border-rose-400/40", "bg-rose-400/10", "text-rose-100");
+function setProfileMessage(message, tone = "info") {
+    if (!profileMessage) {
         return;
     }
 
-    if (tone === "success") {
-        setupMessage.classList.add("border-emerald-400/40", "bg-emerald-400/10", "text-emerald-100");
-        return;
-    }
-
-    setupMessage.classList.add("border-slate-700", "bg-slate-950/45", "text-slate-300");
+    profileMessage.textContent = message;
+    profileMessage.className = `form-message form-message--${tone}`;
 }
 
 function setBootstrapMessage(message) {
@@ -111,6 +101,10 @@ function showDashboard(show) {
     authScreen.classList.toggle("hidden", show);
     setupScreen.classList.toggle("hidden", true);
     dashboardScreen.classList.toggle("hidden", !show);
+
+    if (show) {
+        setActivePanel("dashboard");
+    }
 }
 
 function showLoginScreen() {
@@ -137,6 +131,31 @@ function togglePasswordVisibility(inputId, button) {
     button.textContent = nextType === "password" ? "👁" : "🙈";
 }
 
+function setActivePanel(panelName) {
+    adminPanels.forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.adminPanel !== panelName);
+    });
+
+    adminNavButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.panel === panelName);
+    });
+}
+
+function syncAdminProfile(user) {
+    if (!user) {
+        return;
+    }
+
+    profileUsernameInput.value = user.username || "";
+    profileEmailInput.value = user.email || "";
+
+    const name = user.username || "Admin";
+    const sidebarEl = document.getElementById("sidebarUsername");
+    const navbarEl = document.getElementById("navbarUsername");
+    if (sidebarEl) sidebarEl.textContent = name;
+    if (navbarEl) navbarEl.textContent = name;
+}
+
 function renderJobs(jobs) {
     if (!jobs || jobs.length === 0) {
         jobsTableBody.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">Aucun job recent.</td></tr>';
@@ -145,32 +164,34 @@ function renderJobs(jobs) {
 
     jobsTableBody.innerHTML = jobs.map((job) => {
         const statusClass = job.status === "completed"
-            ? "bg-emerald-400/15 text-emerald-200 border-emerald-400/30"
+            ? "pill-completed"
             : job.status === "failed"
-                ? "bg-rose-400/15 text-rose-200 border-rose-400/30"
-                : "bg-amber-400/15 text-amber-200 border-amber-400/30";
+                ? "pill-failed"
+                : job.status === "running"
+                    ? "pill-running"
+                    : "pill-queued";
         const progressBar = job.status === "running" || job.status === "queued"
-            ? `<div class="mt-2 h-2 w-40 overflow-hidden rounded-full bg-slate-700"><div class="h-full rounded-full bg-cyan-400" style="width:${job.progress || 0}%"></div></div>`
+            ? `<div class="lte-progress"><div class="lte-progress-bar" style="width:${job.progress || 0}%"></div></div>`
             : "";
 
         return `
-          <tr class="align-top">
-            <td class="px-4 py-4">
-              <div class="font-semibold text-slate-100">${job.clientId || job.sourceIp || "unknown"}</div>
-              <div class="text-xs text-slate-400">${job.sourceIp || ""}</div>
+          <tr>
+            <td>
+              <div class="job-user">${job.clientId || job.sourceIp || "unknown"}</div>
+              <div class="job-ip">${job.sourceIp || ""}</div>
             </td>
-            <td class="px-4 py-4">
-              <div class="font-semibold text-slate-100">${job.fileName || job.preferredName || "En attente"}</div>
-              <div class="text-xs text-slate-400">${job.quality || "qualite inconnue"}</div>
+            <td>
+              <div class="job-file">${job.fileName || job.preferredName || "En attente"}</div>
+              <div class="job-quality">${job.quality || "qualite inconnue"}</div>
             </td>
-            <td class="px-4 py-4 text-slate-300">
+            <td>
               <div>Flux: ${formatDuration(job.durationMs || 0)}</div>
-              <div>Real: ${formatDuration((job.completedAt || Date.now()) - (job.startedAt || job.updatedAt || Date.now()))}</div>
+              <div>Reel: ${formatDuration((job.completedAt || Date.now()) - (job.startedAt || job.updatedAt || Date.now()))}</div>
               ${progressBar}
             </td>
-            <td class="px-4 py-4">
-              <span class="status-pill inline-flex rounded-full border px-3 py-1 text-xs font-bold ${statusClass}">${job.status}</span>
-              <div class="mt-2 text-xs text-slate-400">${job.message || ""}</div>
+            <td>
+              <span class="status-pill ${statusClass}">${job.status}</span>
+              <div class="job-msg">${job.message || ""}</div>
             </td>
           </tr>
         `;
@@ -180,8 +201,8 @@ function renderJobs(jobs) {
 function renderDashboard(data) {
     serverStatus.textContent = data.serverStatus || "Idle";
     serverStatus.className = data.serverStatus === "Busy"
-        ? "mt-1 text-lg font-bold text-amber-300"
-        : "mt-1 text-lg font-bold text-emerald-300";
+        ? "lte-stat-value stat-busy"
+        : "lte-stat-value";
 
     cpuRamValue.textContent = formatMemory(data);
     activeJobsValue.textContent = `${data.activeDownloads || 0} actifs`;
@@ -210,6 +231,7 @@ function renderDashboard(data) {
 
     lastRefresh.textContent = `Mise a jour: ${new Date().toLocaleString()}`;
     renderJobs(data.jobs || []);
+    syncAdminProfile(data.admin);
 }
 
 function stopDashboardAutoRefresh() {
@@ -328,6 +350,7 @@ async function loadSession() {
     try {
         const session = await fetchJson("/api/admin/session");
         setMessage(`Connecte en tant que ${session.user.username}.`, "success");
+        syncAdminProfile(session.user);
         showDashboard(true);
         return session;
     } catch (_error) {
@@ -429,6 +452,54 @@ passwordToggleButtons.forEach((button) => {
     });
 });
 
+adminNavButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+        setActivePanel(button.dataset.panel);
+    });
+});
+
+profileForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const email = profileEmailInput.value.trim();
+    const currentPassword = profileCurrentPasswordInput.value;
+    const newPassword = profileNewPasswordInput.value;
+    const confirmPassword = profileConfirmPasswordInput.value;
+
+    if ((newPassword || confirmPassword) && newPassword !== confirmPassword) {
+        setProfileMessage("La confirmation du nouveau mot de passe ne correspond pas.", "error");
+        return;
+    }
+
+    if ((newPassword || confirmPassword) && !currentPassword) {
+        setProfileMessage("Renseignez le mot de passe actuel pour changer le mot de passe.", "error");
+        return;
+    }
+
+    try {
+        const payload = { email };
+
+        if (newPassword) {
+            payload.currentPassword = currentPassword;
+            payload.newPassword = newPassword;
+        }
+
+        const result = await fetchJson("/api/admin/profile", {
+            method: "PATCH",
+            body: JSON.stringify(payload)
+        });
+
+        syncAdminProfile(result.user);
+        profileCurrentPasswordInput.value = "";
+        profileNewPasswordInput.value = "";
+        profileConfirmPasswordInput.value = "";
+        setProfileMessage(result.message || "Profil administrateur mis a jour.", "success");
+        setMessage(result.message || "Profil administrateur mis a jour.", "success");
+    } catch (error) {
+        setProfileMessage(error.message, "error");
+    }
+});
+
 settingsForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -478,16 +549,10 @@ logoutBtn.addEventListener("click", async () => {
 async function init() {
     try {
         await loadBootstrap();
-        if (hasAdminSessionCookie()) {
-            const session = await loadSession();
-            if (session) {
-                await loadDashboard();
-                startDashboardStream();
-            } else {
-                stopDashboardAutoRefresh();
-                stopDashboardStream();
-                showLoginScreen();
-            }
+        const session = await loadSession();
+        if (session) {
+            await loadDashboard();
+            startDashboardStream();
         } else {
             stopDashboardAutoRefresh();
             stopDashboardStream();
