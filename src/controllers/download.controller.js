@@ -6,6 +6,8 @@ const {
 } = require("../services/media-download.service");
 const {
     runDownloadJob,
+    cancelJob,
+    clearQueuedJobs,
     getJob,
     findCompletedDownload,
     getCapacitySnapshot
@@ -258,9 +260,34 @@ function getDownloadCapacity(_req, res) {
     return res.status(200).json(getCapacitySnapshot());
 }
 
+function stopDownloadJob(req, res) {
+    const { jobId } = req.params;
+    const result = cancelJob(jobId);
+
+    if (!result.ok) {
+        return res.status(404).json({ error: result.error || "Job introuvable" });
+    }
+
+    return res.status(200).json({
+        message: "Arret demande",
+        status: result.status
+    });
+}
+
+function clearDownloadQueue(_req, res) {
+    const result = clearQueuedJobs();
+
+    return res.status(200).json({
+        message: "File d'attente videe",
+        clearedCount: result.clearedCount
+    });
+}
+
 module.exports = {
     handleDownload,
     startDownload,
     getDownloadStatus,
-    getDownloadCapacity
+    getDownloadCapacity,
+    stopDownloadJob,
+    clearDownloadQueue
 };

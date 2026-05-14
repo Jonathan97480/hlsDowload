@@ -299,6 +299,7 @@ async function startQueuedJobsInternal(state) {
                 serverUrl: item.serverUrl,
                 serverOrigin,
                 apiKey: item.apiKey,
+                youtubeVideoId: item.youtubeVideoId || item.body?.videoId || "",
                 jobId: data.jobId,
                 fileName: data.fileName || item.body?.fileName || "",
                 filePath: data.filePath || "",
@@ -393,7 +394,7 @@ async function pollActiveJobs() {
                         nextJob.error = downloadResult.error || "";
                     }
                     state.recentJobs.unshift(nextJob);
-                } else if (nextJob.status === "failed") {
+                } else if (nextJob.status === "failed" || nextJob.status === "cancelled") {
                     state.recentJobs.unshift(nextJob);
                 } else {
                     nextActive.push(nextJob);
@@ -530,6 +531,30 @@ function buildYoutubeServerUrl(serverUrl) {
     return `${base}/api/download/youtube`;
 }
 
+function buildYoutubePlaylistServerUrl(serverUrl) {
+    const youtubeBase = buildYoutubeServerUrl(serverUrl);
+    return youtubeBase ? `${youtubeBase}/playlist` : "";
+}
+
+function buildControlServerUrl(serverUrl) {
+    const base = String(serverUrl || "").trim().replace(/\/$/, "");
+    if (!base) return "";
+    if (/\/api\/download\/youtube$/i.test(base)) return base.replace(/\/api\/download\/youtube$/i, "/api/download/control");
+    if (/\/api\/download$/i.test(base)) return `${base}/control`;
+    if (/\/api\/?$/.test(base)) return `${base}/download/control`;
+    return `${base}/api/download/control`;
+}
+
+function hasQueuedYouTubeVideo(state, videoId) {
+    const target = String(videoId || "").trim();
+    if (!target) return false;
+
+    const inQueue = (state.queue || []).some((item) => String(item.youtubeVideoId || item.body?.videoId || "").trim() === target);
+    const inActive = (state.activeJobs || []).some((job) => String(job.youtubeVideoId || job.videoId || "").trim() === target);
+    const inRecent = (state.recentJobs || []).some((job) => String(job.youtubeVideoId || job.videoId || "").trim() === target);
+    return inQueue || inActive || inRecent;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "youtubeDetected") {
         const data = {
@@ -587,6 +612,86 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return true;
     }
 
+    if (message?.type === "addYoutubePlaylistToQueue") {
+        const item = message.item || {};
+        const serverUrl = String(item.serverUrl || "").trim();
+        const apiKey = String(item.apiKey || "").trim();
+        const playlistUrl = String(item.playlistUrl || "").trim();
+
+        if (!serverUrl || !apiKey || !playlistUrl) {
+            sendResponse({ ok: false, error: "playlistUrl, serverUrl et apiKey requis" });
+            return;
+        }
+
+        const playlistServerUrl = buildYoutubePlaylistServerUrl(serverUrl);
+        const youtubeServerUrl = buildYoutubeServerUrl(serverUrl);
+
+        withManagerLock(async () => {
+            const playlistResponse = await fetch(playlistServerUrl, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-api-key": apiKey
+                },
+                body: JSON.stringify({
+                    playlistUrl,
+                    headers: item.headers || {}
+                })
+            });
+
+            const playlistData = await playlistResponse.json();
+            if (!playlistResponse.ok) {
+                throw new Error(playlistData?.error || "Echec analyse playlist");
+            }
+
+            const state = await getManagerState();
+            let addedCount = 0;
+            let skippedCount = 0;
+
+            (Array.isArray(playlistData.videos) ? playlistData.videos : []).forEach((video) => {
+                const videoId = String(video.videoId || "").trim();
+                if (!videoId || hasQueuedYouTubeVideo(state, videoId)) {
+                    skippedCount += 1;
+                    return;
+                }
+
+                state.queue.push({
+                    id: crypto.randomUUID(),
+                    createdAt: Date.now(),
+                    serverUrl: youtubeServerUrl,
+                    apiKey,
+                    youtubeVideoId: videoId,
+                    body: {
+                        videoId,
+                        fileName: String(video.title || "").trim(),
+                        headers: {
+                            ...(item.headers || {}),
+                            referer: String(video.url || playlistUrl).trim() || playlistUrl
+                        }
+                    }
+                });
+                addedCount += 1;
+            });
+
+            await startQueuedJobsInternal(state);
+            await saveManagerState(state);
+            if (state.activeJobs.length > 0) {
+                schedulePoll(1000);
+            }
+
+            sendResponse({
+                ok: true,
+                queue: state.queue,
+                state,
+                playlistTitle: playlistData.playlistTitle || "",
+                addedCount,
+                skippedCount
+            });
+        }).catch((error) => sendResponse({ ok: false, error: error.message || "Erreur playlist YouTube" }));
+
+        return true;
+    }
+
     if (message?.type === "captureUrl") {
         rememberUrl(sender.tab?.id ?? -1, message.url, message.context || {});
         sendResponse({ ok: true });
@@ -637,6 +742,74 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         getManagerState()
             .then((state) => sendResponse({ ok: true, queue: state.queue }))
             .catch(() => sendResponse({ ok: true, queue: [] }));
+        return true;
+    }
+
+    if (message?.type === "stopCurrentDownload") {
+        withManagerLock(async () => {
+            const state = await getManagerState();
+            const targetJob = state.activeJobs[0] || null;
+
+            if (!targetJob?.jobId || !targetJob?.serverUrl) {
+                sendResponse({ ok: false, error: "Aucun telechargement actif a arreter" });
+                return;
+            }
+
+            const controlUrl = `${buildControlServerUrl(targetJob.serverUrl)}/stop/${targetJob.jobId}`;
+            const response = await fetch(controlUrl, {
+                method: "POST",
+                headers: { "x-api-key": targetJob.apiKey }
+            });
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data?.error || "Arret impossible");
+            }
+
+            state.activeJobs = state.activeJobs.filter((job) => job.jobId !== targetJob.jobId);
+            state.recentJobs.unshift({
+                ...targetJob,
+                status: "cancelled",
+                message: data?.message || "Arret demande",
+                error: ""
+            });
+            await saveManagerState(state);
+            sendResponse({ ok: true, state });
+        }).catch((error) => sendResponse({ ok: false, error: error.message || "Erreur arret" }));
+        return true;
+    }
+
+    if (message?.type === "clearPendingQueue") {
+        withManagerLock(async () => {
+            const state = await getManagerState();
+            const clearedCount = Array.isArray(state.queue) ? state.queue.length : 0;
+            const queuedServerJobs = (state.activeJobs || []).filter((job) => job.status === "queued" && job.jobId && job.serverUrl);
+
+            for (const job of queuedServerJobs) {
+                const controlUrl = `${buildControlServerUrl(job.serverUrl)}/stop/${job.jobId}`;
+                try {
+                    await fetch(controlUrl, {
+                        method: "POST",
+                        headers: { "x-api-key": job.apiKey }
+                    });
+                } catch (_error) { }
+            }
+
+            state.queue = [];
+            state.activeJobs = (state.activeJobs || []).filter((job) => job.status !== "queued");
+            state.recentJobs = [
+                ...(queuedServerJobs.map((job) => ({
+                    ...job,
+                    status: "cancelled",
+                    message: "Retire de la file d'attente",
+                    error: "Annule par utilisateur",
+                    updatedAt: Date.now()
+                }))),
+                ...(state.recentJobs || [])
+            ].slice(0, 30);
+            await saveManagerState(state);
+            sendResponse({ ok: true, clearedCount: clearedCount + queuedServerJobs.length, state });
+        }).catch((error) => sendResponse({ ok: false, error: error.message || "Erreur file" }));
         return true;
     }
 

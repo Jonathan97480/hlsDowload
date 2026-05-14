@@ -22,7 +22,6 @@ function buildYtDlpArgs(videoIdOrUrl, options) {
     if (!options) options = {};
     var args = [
         "--no-warnings",
-        "--no-call-home",
         "--no-playlist",
         "--newline",
         "--progress"
@@ -76,14 +75,62 @@ function parseProgress(line) {
     return result;
 }
 
-function downloadYouTubeVideo(videoIdOrUrl, headers, hooks, options) {
+function removeOutputIfExists(outputPath) {
+    try {
+        if (fs.existsSync(outputPath)) {
+            fs.unlinkSync(outputPath);
+        }
+    } catch (_error) {
+        // Ignore cleanup failures on cancel.
+    }
+}
+
+function removeRelatedArtifacts(outputPath) {
+    removeOutputIfExists(outputPath);
+
+    try {
+        var dirPath = path.dirname(outputPath);
+        var baseName = path.parse(outputPath).name;
+        fs.readdirSync(dirPath).forEach(function (fileName) {
+            if (!fileName.startsWith(baseName)) {
+                return;
+            }
+            try {
+                fs.unlinkSync(path.join(dirPath, fileName));
+            } catch (_error) { }
+        });
+    } catch (_error) {
+        // Ignore cleanup failures on cancel.
+    }
+}
+
+function createCancelledError() {
+    return new Error("Telechargement annule");
+}
+
+function createYouTubeDownloadTask(videoIdOrUrl, headers, hooks, options) {
     if (!headers) headers = {};
     if (!hooks) hooks = {};
     if (!options) options = {};
 
-    return new Promise(function (resolve, reject) {
-        var outputFileName = createSafeOutputName(DOWNLOADS_DIR, options.preferredName || "", 200);
-        var outputPath = path.join(DOWNLOADS_DIR, outputFileName);
+    var child = null;
+    var settled = false;
+    var cancelled = false;
+    var outputFileName = createSafeOutputName(DOWNLOADS_DIR, options.preferredName || "", 200);
+    var outputPath = path.join(DOWNLOADS_DIR, outputFileName);
+    var promise = new Promise(function (resolve, reject) {
+        function safeResolve(value) {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+        }
+
+        function safeReject(error) {
+            if (settled) return;
+            settled = true;
+            reject(error);
+        }
+
         var args = buildYtDlpArgs(videoIdOrUrl, {
             cookie: headers.cookie,
             referer: headers.referer,
@@ -95,21 +142,26 @@ function downloadYouTubeVideo(videoIdOrUrl, headers, hooks, options) {
             hooks.onStart();
         }
 
-        var child = execFile(YT_DLP_BIN, args, {
+        child = execFile(YT_DLP_BIN, args, {
             maxBuffer: 10 * 1024 * 1024,
             timeout: 30 * 60 * 1000,
             env: Object.assign({}, process.env)
         }, function (error, stdout, stderr) {
+            if (cancelled) {
+                removeRelatedArtifacts(outputPath);
+                return safeReject(createCancelledError());
+            }
+
             if (error) {
                 var message = stderr || error.message || "yt-dlp error";
-                return reject(new Error(message.indexOf("ERROR:") !== -1 ? message : "yt-dlp: " + message));
+                return safeReject(new Error(message.indexOf("ERROR:") !== -1 ? message : "yt-dlp: " + message));
             }
 
             if (!fs.existsSync(outputPath)) {
-                return reject(new Error("Impossible de trouver le fichier telecharge"));
+                return safeReject(new Error("Impossible de trouver le fichier telecharge"));
             }
 
-            return resolve({
+            return safeResolve({
                 outputFileName: outputFileName,
                 outputPath: outputPath,
                 filePath: "/downloads/" + outputFileName,
@@ -135,6 +187,124 @@ function downloadYouTubeVideo(videoIdOrUrl, headers, hooks, options) {
                         raw: lines[i]
                     });
                 }
+            }
+        });
+    });
+
+    return {
+        promise: promise,
+        cancel: function () {
+            if (settled || cancelled) return false;
+            cancelled = true;
+            if (child && typeof child.kill === "function") {
+                try {
+                    child.kill("SIGKILL");
+                } catch (_error) { }
+            }
+            removeRelatedArtifacts(outputPath);
+            return true;
+        }
+    };
+}
+
+function downloadYouTubeVideo(videoIdOrUrl, headers, hooks, options) {
+    return createYouTubeDownloadTask(videoIdOrUrl, headers, hooks, options).promise;
+}
+
+function isYouTubePlaylistUrl(url) {
+    if (typeof url !== "string") return false;
+    try {
+        var parsed = new URL(url.trim());
+        if (!/^(www\.)?(youtube\.com|music\.youtube\.com)$/i.test(parsed.hostname)) {
+            return false;
+        }
+        return !!parsed.searchParams.get("list");
+    } catch (_error) {
+        return false;
+    }
+}
+
+function normalizeYouTubePlaylistUrl(url) {
+    if (typeof url !== "string") return "";
+
+    try {
+        var parsed = new URL(url.trim());
+        var listId = parsed.searchParams.get("list");
+        if (!listId) return "";
+        return "https://www.youtube.com/playlist?list=" + encodeURIComponent(listId.trim());
+    } catch (_error) {
+        return "";
+    }
+}
+
+function listYouTubePlaylistVideos(playlistUrl, headers) {
+    if (!headers) headers = {};
+
+    return new Promise(function (resolve, reject) {
+        var normalizedPlaylistUrl = normalizeYouTubePlaylistUrl(playlistUrl);
+        if (!normalizedPlaylistUrl) {
+            return reject(new Error("URL de playlist YouTube invalide"));
+        }
+
+        var args = [
+            "--flat-playlist",
+            "--dump-single-json",
+            "--no-warnings"
+        ];
+
+        if (headers.cookie && typeof headers.cookie === "string" && headers.cookie.trim()) {
+            args.push("--add-header", "Cookie:" + headers.cookie.trim());
+        }
+
+        if (headers.referer && typeof headers.referer === "string" && headers.referer.trim()) {
+            args.push("--add-header", "Referer:" + headers.referer.trim());
+        }
+
+        if (headers.userAgent && typeof headers.userAgent === "string" && headers.userAgent.trim()) {
+            args.push("--user-agent", headers.userAgent.trim());
+        }
+
+        args.push(normalizedPlaylistUrl);
+
+        execFile(YT_DLP_BIN, args, {
+            maxBuffer: 20 * 1024 * 1024,
+            timeout: 5 * 60 * 1000,
+            env: Object.assign({}, process.env)
+        }, function (error, stdout, stderr) {
+            if (error) {
+                var message = stderr || error.message || "yt-dlp playlist error";
+                if (/playlist does not exist/i.test(message)) {
+                    return reject(new Error("Playlist YouTube invalide, privee ou inaccessible"));
+                }
+                return reject(new Error(message.indexOf("ERROR:") !== -1 ? message : "yt-dlp: " + message));
+            }
+
+            try {
+                var data = JSON.parse(stdout || "{}");
+                var entries = Array.isArray(data.entries) ? data.entries : [];
+                var videos = entries
+                    .map(function (entry, index) {
+                        var id = typeof entry.id === "string" ? entry.id.trim() : "";
+                        if (!id) return null;
+
+                        return {
+                            videoId: id,
+                            title: typeof entry.title === "string" ? entry.title.trim() : "",
+                            url: typeof entry.url === "string" && /^https?:\/\//i.test(entry.url)
+                                ? entry.url.trim()
+                                : "https://www.youtube.com/watch?v=" + id,
+                            position: index + 1
+                        };
+                    })
+                    .filter(Boolean);
+
+                resolve({
+                    title: typeof data.title === "string" ? data.title.trim() : "",
+                    playlistId: typeof data.id === "string" ? data.id.trim() : "",
+                    videos: videos
+                });
+            } catch (parseError) {
+                reject(new Error("Impossible de lire la playlist YouTube: " + parseError.message));
             }
         });
     });
@@ -164,7 +334,11 @@ function extractVideoId(url) {
 }
 
 module.exports = {
+    createYouTubeDownloadTask: createYouTubeDownloadTask,
     downloadYouTubeVideo: downloadYouTubeVideo,
+    listYouTubePlaylistVideos: listYouTubePlaylistVideos,
     isYouTubeUrl: isYouTubeUrl,
+    isYouTubePlaylistUrl: isYouTubePlaylistUrl,
+    normalizeYouTubePlaylistUrl: normalizeYouTubePlaylistUrl,
     extractVideoId: extractVideoId
 };

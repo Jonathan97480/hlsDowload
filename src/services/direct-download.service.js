@@ -60,6 +60,10 @@ function requestWithRedirect(url, headers, redirectCount = 0) {
 }
 
 async function downloadDirectMp4(sourceUrl, headers = {}, hooks = {}, options = {}) {
+    return createDirectDownloadTask(sourceUrl, headers, hooks, options).promise;
+}
+
+function createDirectDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}) {
     const downloadsDir = ensureDownloadsDir();
     const parsedMaxTitleLength = Number.parseInt(options.maxTitleLength, 10);
     const maxTitleLength = Number.isFinite(parsedMaxTitleLength)
@@ -68,59 +72,105 @@ async function downloadDirectMp4(sourceUrl, headers = {}, hooks = {}, options = 
     const outputFileName = createSafeOutputName(downloadsDir, options.preferredName || "", maxTitleLength);
     const outputPath = path.join(downloadsDir, outputFileName);
     const requestHeaders = buildRequestHeaders(headers);
-    const response = await requestWithRedirect(sourceUrl, requestHeaders);
+    let fileWriter = null;
+    let response = null;
+    let cancelled = false;
+    let settled = false;
 
-    if (typeof hooks.onStart === "function") {
-        hooks.onStart();
-    }
+    const promise = requestWithRedirect(sourceUrl, requestHeaders).then((res) => {
+        response = res;
 
-    const totalBytes = Number.parseInt(response.headers["content-length"], 10);
+        if (typeof hooks.onStart === "function") {
+            hooks.onStart();
+        }
 
-    return new Promise((resolve, reject) => {
-        let downloadedBytes = 0;
-        let lastPercent = -1;
-        const fileWriter = fs.createWriteStream(outputPath);
+        const totalBytes = Number.parseInt(response.headers["content-length"], 10);
 
-        response.on("data", (chunk) => {
-            downloadedBytes += chunk.length;
-
-            if (!Number.isFinite(totalBytes) || totalBytes <= 0 || typeof hooks.onProgress !== "function") {
-                return;
+        return new Promise((resolve, reject) => {
+            function safeResolve(value) {
+                if (settled) return;
+                settled = true;
+                resolve(value);
             }
 
-            const percent = Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)));
-            if (percent !== lastPercent) {
-                lastPercent = percent;
-                hooks.onProgress({ percent, timemark: "" });
+            function safeReject(error) {
+                if (settled) return;
+                settled = true;
+                reject(error);
             }
-        });
 
-        response.on("error", (error) => {
-            cleanupPartial(outputPath, fileWriter, reject, error);
-        });
+            let downloadedBytes = 0;
+            let lastPercent = -1;
+            fileWriter = fs.createWriteStream(outputPath);
 
-        fileWriter.on("error", (error) => {
-            cleanupPartial(outputPath, fileWriter, reject, error);
-        });
+            response.on("data", (chunk) => {
+                downloadedBytes += chunk.length;
 
-        fileWriter.on("finish", () => {
-            fileWriter.close((closeError) => {
-                if (closeError) {
-                    cleanupPartial(outputPath, fileWriter, reject, closeError);
+                if (!Number.isFinite(totalBytes) || totalBytes <= 0 || typeof hooks.onProgress !== "function") {
                     return;
                 }
 
-                resolve({
-                    outputFileName,
-                    outputPath,
-                    quality: "direct",
-                    mode: "direct"
+                const percent = Math.max(0, Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)));
+                if (percent !== lastPercent) {
+                    lastPercent = percent;
+                    hooks.onProgress({ percent, timemark: "" });
+                }
+            });
+
+            response.on("error", (error) => {
+                if (cancelled) {
+                    cleanupPartial(outputPath, fileWriter, safeReject, new Error("Telechargement annule"));
+                    return;
+                }
+                cleanupPartial(outputPath, fileWriter, safeReject, error);
+            });
+
+            fileWriter.on("error", (error) => {
+                cleanupPartial(outputPath, fileWriter, safeReject, error);
+            });
+
+            fileWriter.on("finish", () => {
+                fileWriter.close((closeError) => {
+                    if (closeError) {
+                        cleanupPartial(outputPath, fileWriter, safeReject, closeError);
+                        return;
+                    }
+
+                    if (cancelled) {
+                        cleanupPartial(outputPath, fileWriter, safeReject, new Error("Telechargement annule"));
+                        return;
+                    }
+
+                    safeResolve({
+                        outputFileName,
+                        outputPath,
+                        quality: "direct",
+                        mode: "direct"
+                    });
                 });
             });
-        });
 
-        response.pipe(fileWriter);
+            response.pipe(fileWriter);
+        });
     });
+
+    return {
+        promise,
+        cancel: () => {
+            if (cancelled || settled) return false;
+            cancelled = true;
+            try {
+                if (response && typeof response.destroy === "function") response.destroy(new Error("Telechargement annule"));
+            } catch (_error) { }
+            try {
+                if (fileWriter && typeof fileWriter.destroy === "function") fileWriter.destroy(new Error("Telechargement annule"));
+            } catch (_error) { }
+            try {
+                if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+            } catch (_error) { }
+            return true;
+        }
+    };
 }
 
 function cleanupPartial(outputPath, fileWriter, reject, error) {
@@ -137,5 +187,6 @@ function cleanupPartial(outputPath, fileWriter, reject, error) {
 }
 
 module.exports = {
+    createDirectDownloadTask,
     downloadDirectMp4
 };

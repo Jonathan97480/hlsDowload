@@ -5,8 +5,8 @@ const { getSettings } = require("./admin-store.service");
 const { getSystemMetrics } = require("./system-metrics.service");
 const { getDb } = require("./sqlite.service");
 const { ensureDiskSpaceForDownload } = require("./storage-guard.service");
-const { downloadMediaToMp4, getDownloadSourceType } = require("./media-download.service");
-const { downloadYouTubeVideo } = require("./youtube-download.service");
+const { createDownloadTask, getDownloadSourceType } = require("./media-download.service");
+const { createYouTubeDownloadTask } = require("./youtube-download.service");
 
 const db = getDb();
 const jobs = new Map();
@@ -14,6 +14,7 @@ const jobQueue = [];
 const JOB_TTL_MS = 60 * 60 * 1000;
 const HISTORY_LIMIT = 500;
 let activeJobs = 0;
+const activeTasks = new Map();
 
 const upsertJobStatement = db.prepare(`
     INSERT INTO jobs (
@@ -300,6 +301,22 @@ function outputPathFromFilePath(filePath) {
     return path.resolve(__dirname, "../../downloads", fileName);
 }
 
+function removeJobOutput(job) {
+    const outputPath = outputPathFromFilePath(job?.filePath || "");
+
+    if (!outputPath) {
+        return;
+    }
+
+    try {
+        if (fs.existsSync(outputPath)) {
+            fs.unlinkSync(outputPath);
+        }
+    } catch (_error) {
+        // Ignore delete failures during cancel cleanup.
+    }
+}
+
 function isCompletedJobUsable(job) {
     if (!job || job.status !== "completed" || !job.filePath) {
         return false;
@@ -438,14 +455,19 @@ function startQueuedJob(job) {
         ? runQueuedYouTubeDownload(job, startedAt)
         : runQueuedMediaDownload(job, startedAt, settings, sourceType);
 
+    if (executor && typeof executor.cancel === "function") {
+        activeTasks.set(job.jobId, executor.cancel);
+    }
+
     executor.finally(() => {
+        activeTasks.delete(job.jobId);
         activeJobs = Math.max(0, activeJobs - 1);
         processQueue();
     });
 }
 
 function runQueuedMediaDownload(job, startedAt, settings, sourceType) {
-    return downloadMediaToMp4(job.url, job.headers || {}, {
+    const task = createDownloadTask(job.url, job.headers || {}, {
         onStart: () => {
             finalizeJob(job.jobId, {
                 status: "running",
@@ -465,8 +487,9 @@ function runQueuedMediaDownload(job, startedAt, settings, sourceType) {
     }, {
         preferredName: job.preferredName || "",
         maxTitleLength: settings.maxTitleLength
-    })
-        .then((result) => {
+    });
+
+    const promise = task.promise.then((result) => {
             const completedAt = Date.now();
             const durationMs = startedAt ? completedAt - startedAt : 0;
             let fileSizeBytes = 0;
@@ -491,6 +514,17 @@ function runQueuedMediaDownload(job, startedAt, settings, sourceType) {
             });
         })
         .catch((error) => {
+            if (error && error.message === "Telechargement annule") {
+                finalizeJob(job.jobId, {
+                    status: "cancelled",
+                    completedAt: Date.now(),
+                    durationMs: startedAt ? Date.now() - startedAt : 0,
+                    message: "Telechargement arrete",
+                    error: "Annule par utilisateur"
+                });
+                removeJobOutput(job);
+                return;
+            }
             finalizeJob(job.jobId, {
                 status: "failed",
                 completedAt: Date.now(),
@@ -499,10 +533,15 @@ function runQueuedMediaDownload(job, startedAt, settings, sourceType) {
                 error: error.message || "Erreur interne"
             });
         });
+
+    return {
+        cancel: task.cancel,
+        finally: (callback) => promise.finally(callback)
+    };
 }
 
 function runQueuedYouTubeDownload(job, startedAt) {
-    return downloadYouTubeVideo(job.url.replace("youtube:", ""), job.headers || {}, {
+    const task = createYouTubeDownloadTask(job.url.replace("youtube:", ""), job.headers || {}, {
         onStart: () => {
             finalizeJob(job.jobId, {
                 status: "running",
@@ -521,8 +560,9 @@ function runQueuedYouTubeDownload(job, startedAt) {
         }
     }, {
         preferredName: job.preferredName || ""
-    })
-        .then((result) => {
+    });
+
+    const promise = task.promise.then((result) => {
             const completedAt = Date.now();
             const durationMs = startedAt ? completedAt - startedAt : 0;
             let fileSizeBytes = 0;
@@ -547,6 +587,17 @@ function runQueuedYouTubeDownload(job, startedAt) {
             });
         })
         .catch((error) => {
+            if (error && error.message === "Telechargement annule") {
+                finalizeJob(job.jobId, {
+                    status: "cancelled",
+                    completedAt: Date.now(),
+                    durationMs: startedAt ? Date.now() - startedAt : 0,
+                    message: "Telechargement arrete",
+                    error: "Annule par utilisateur"
+                });
+                removeJobOutput(job);
+                return;
+            }
             finalizeJob(job.jobId, {
                 status: "failed",
                 completedAt: Date.now(),
@@ -555,6 +606,11 @@ function runQueuedYouTubeDownload(job, startedAt) {
                 error: error.message || "Erreur yt-dlp"
             });
         });
+
+    return {
+        cancel: task.cancel,
+        finally: (callback) => promise.finally(callback)
+    };
 }
 
 function findCompletedDownload({ url, headers, preferredName }) {
@@ -591,6 +647,62 @@ function runDownloadJob({ url, headers, preferredName, maxTitleLength = 500, cli
     return job;
 }
 
+function cancelJob(jobId) {
+    const job = jobs.get(jobId);
+
+    if (!job) {
+        return { ok: false, error: "Job introuvable" };
+    }
+
+    if (job.status === "queued") {
+        const index = jobQueue.indexOf(jobId);
+        if (index !== -1) {
+            jobQueue.splice(index, 1);
+        }
+
+        finalizeJob(jobId, {
+            status: "cancelled",
+            completedAt: Date.now(),
+            durationMs: 0,
+            message: "Telechargement arrete",
+            error: "Annule par utilisateur"
+        });
+        removeJobOutput(job);
+        return { ok: true, status: "cancelled" };
+    }
+
+    if (job.status !== "running") {
+        return { ok: false, error: "Job non annulable" };
+    }
+
+    const cancel = activeTasks.get(jobId);
+    if (!cancel) {
+        return { ok: false, error: "Arret impossible pour ce job" };
+    }
+
+    cancel();
+    return { ok: true, status: "cancelling" };
+}
+
+function clearQueuedJobs() {
+    const queuedIds = jobQueue.slice();
+    jobQueue.length = 0;
+
+    queuedIds.forEach((jobId) => {
+        const job = jobs.get(jobId);
+        finalizeJob(jobId, {
+            status: "cancelled",
+            completedAt: Date.now(),
+            durationMs: 0,
+            message: "Retire de la file d'attente",
+            error: "Annule par utilisateur"
+        });
+        removeJobOutput(job);
+    });
+
+    return { clearedCount: queuedIds.length };
+}
+
 function restorePendingJobsFromDatabase() {
     const rows = db.prepare(`
         SELECT * FROM jobs
@@ -620,6 +732,8 @@ function restorePendingJobsFromDatabase() {
 
 module.exports = {
     buildDashboardSnapshot,
+    cancelJob,
+    clearQueuedJobs,
     getCapacitySnapshot,
     getHistorySnapshot,
     runDownloadJob,

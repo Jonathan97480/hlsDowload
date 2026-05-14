@@ -1,4 +1,11 @@
-const { downloadYouTubeVideo, isYouTubeUrl, extractVideoId } = require("../services/youtube-download.service");
+const {
+    downloadYouTubeVideo,
+    listYouTubePlaylistVideos,
+    isYouTubeUrl,
+    isYouTubePlaylistUrl,
+    normalizeYouTubePlaylistUrl,
+    extractVideoId
+} = require("../services/youtube-download.service");
 const { getSettings } = require("../services/admin-store.service");
 const {
     runDownloadJob,
@@ -166,8 +173,32 @@ function getYouTubeStatus(req, res) {
     });
 }
 
+async function listYouTubePlaylist(req, res) {
+    try {
+        const playlistUrl = sanitizeString(req.body?.playlistUrl);
+        const normalizedPlaylistUrl = normalizeYouTubePlaylistUrl(playlistUrl);
+        if (!isYouTubePlaylistUrl(playlistUrl) || !normalizedPlaylistUrl) {
+            return res.status(400).json({ error: "URL de playlist YouTube invalide" });
+        }
+
+        const ffmpegHeaders = buildRequestHeaders(req.body?.headers);
+        const result = await listYouTubePlaylistVideos(normalizedPlaylistUrl, ffmpegHeaders);
+
+        return res.status(200).json({
+            message: "Playlist analysee",
+            playlistTitle: result.title,
+            playlistId: result.playlistId,
+            playlistUrl: normalizedPlaylistUrl,
+            videos: result.videos
+        });
+    } catch (error) {
+        return res.status(500).json({ error: error.message || "Erreur playlist YouTube" });
+    }
+}
+
 module.exports = {
     handleYouTubeDownload,
     startYouTubeDownload,
-    getYouTubeStatus
+    getYouTubeStatus,
+    listYouTubePlaylist
 };

@@ -153,7 +153,105 @@ function removeOutputIfExists(outputPath) {
     }
 }
 
+function createCancelledError() {
+    return new Error("Telechargement annule");
+}
+
+function runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, mode) {
+    const isTranscode = mode === "transcode";
+    let command = null;
+    let settled = false;
+    let cancelled = false;
+
+    const promise = new Promise((resolve, reject) => {
+        function safeResolve(value) {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+        }
+
+        function safeReject(error) {
+            if (settled) return;
+            settled = true;
+            reject(error);
+        }
+
+        command = ffmpeg(finalUrl);
+
+        if (inputOptions.length > 0) {
+            command.inputOptions(inputOptions);
+        }
+
+        const outputOptions = isTranscode
+            ? [
+                "-c:v libx264",
+                "-preset veryfast",
+                "-crf 22",
+                "-pix_fmt yuv420p",
+                "-c:a aac",
+                "-b:a 128k",
+                "-movflags +faststart"
+            ]
+            : [
+                "-c copy",
+                "-bsf:a aac_adtstoasc",
+                "-movflags +faststart"
+            ];
+
+        command
+            .outputOptions(outputOptions)
+            .format("mp4")
+            .on("start", () => {
+                console.log(`[ffmpeg] FFmpeg demarree (${mode})`);
+                if (typeof hooks.onStart === "function") {
+                    hooks.onStart();
+                }
+            })
+            .on("progress", (progress) => {
+                if (typeof hooks.onProgress === "function") {
+                    hooks.onProgress(progress || {});
+                }
+            })
+            .on("end", () => {
+                if (cancelled) {
+                    removeOutputIfExists(outputPath);
+                    safeReject(createCancelledError());
+                    return;
+                }
+                safeResolve();
+            })
+            .on("error", (error) => {
+                if (cancelled) {
+                    removeOutputIfExists(outputPath);
+                    safeReject(createCancelledError());
+                    return;
+                }
+                safeReject(new Error(`Echec FFmpeg (${mode}): ${error.message}`));
+            })
+            .save(outputPath);
+    });
+
+    return {
+        promise,
+        cancel: () => {
+            if (settled || cancelled) return false;
+            cancelled = true;
+            try {
+                if (command && typeof command.kill === "function") {
+                    command.kill("SIGKILL");
+                }
+            } catch (_error) { }
+            removeOutputIfExists(outputPath);
+            return true;
+        }
+    };
+}
+
 function downloadHlsToMp4(sourceUrl, headers = {}, hooks = {}, options = {}) {
+    return createHlsDownloadTask(sourceUrl, headers, hooks, options).promise;
+}
+
+function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}) {
     const downloadsDir = ensureDownloadsDir();
     const parsedMaxTitleLength = Number.parseInt(options.maxTitleLength, 10);
     const maxTitleLength = Number.isFinite(parsedMaxTitleLength)
@@ -170,7 +268,18 @@ function downloadHlsToMp4(sourceUrl, headers = {}, hooks = {}, options = {}) {
     if (headers?.userAgent) httpHeaders["User-Agent"] = headers.userAgent;
     if (headers?.cookie) httpHeaders["Cookie"] = headers.cookie;
 
-    return findMasterM3U8(sourceUrl, httpHeaders)
+    let currentTask = null;
+    let cancelled = false;
+    const cancel = () => {
+        cancelled = true;
+        if (currentTask && typeof currentTask.cancel === "function") {
+            currentTask.cancel();
+        }
+        removeOutputIfExists(outputPath);
+        return true;
+    };
+
+    const promise = findMasterM3U8(sourceUrl, httpHeaders)
         .then((masterResult) => {
             console.log(`[ffmpeg] ====== NOUVELLE CONVERSION ======`);
             console.log(`[ffmpeg] URL source: ${sourceUrl}`);
@@ -195,15 +304,26 @@ function downloadHlsToMp4(sourceUrl, headers = {}, hooks = {}, options = {}) {
             console.log(`[ffmpeg] URL finale: ${finalUrl}`);
             console.log("[ffmpeg] Demarrage FFmpeg en mode copy...");
 
-            return runFfmpegConvert(finalUrl, inputOptions, outputPath, hooks, "copy")
-                .then(() => validateOutputFile(outputPath))
+            currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "copy");
+            return currentTask.promise
+                .then(() => {
+                    if (cancelled) throw createCancelledError();
+                    return validateOutputFile(outputPath);
+                })
                 .catch((error) => {
+                    if (cancelled || error.message === "Telechargement annule") {
+                        throw createCancelledError();
+                    }
                     console.log(`[ffmpeg] Copy invalide/instable: ${error.message}`);
                     console.log("[ffmpeg] Relance en mode transcodage robuste...");
                     removeOutputIfExists(outputPath);
 
-                    return runFfmpegConvert(finalUrl, inputOptions, outputPath, hooks, "transcode")
-                        .then(() => validateOutputFile(outputPath))
+                    currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "transcode");
+                    return currentTask.promise
+                        .then(() => {
+                            if (cancelled) throw createCancelledError();
+                            return validateOutputFile(outputPath);
+                        })
                         .then(() => ({ mode: "transcode" }));
                 })
                 .then((fallbackResult) => {
@@ -218,8 +338,14 @@ function downloadHlsToMp4(sourceUrl, headers = {}, hooks = {}, options = {}) {
                     };
                 });
         });
+
+    return {
+        promise,
+        cancel
+    };
 }
 
 module.exports = {
+    createHlsDownloadTask,
     downloadHlsToMp4
 };

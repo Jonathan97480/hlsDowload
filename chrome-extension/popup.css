@@ -61,7 +61,7 @@ textarea {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 10px;
 }
@@ -72,6 +72,16 @@ textarea {
 
 .youtube-btn:hover:not(:disabled) {
   background: #cc0000;
+}
+
+.playlist-btn,
+.playlist-queue-btn {
+  background: #7c3aed;
+}
+
+.playlist-btn:hover:not(:disabled),
+.playlist-queue-btn:hover:not(:disabled) {
+  background: #6d28d9;
 }
 
 .status-card-youtube {
@@ -170,6 +180,29 @@ textarea {
   font-size: 12px;
   color: #0f766e;
   margin-top: 4px;
+}
+
+.job-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.danger-btn {
+  background: #b91c1c;
+}
+
+.danger-btn:hover:not(:disabled) {
+  background: #991b1b;
+}
+
+.danger-btn-soft {
+  background: #475569;
+}
+
+.danger-btn-soft:hover:not(:disabled) {
+  background: #334155;
 }
 
 button {

@@ -42,6 +42,13 @@
         <button id="detectBtn" type="button">Detecter</button>
         <button id="sendBtn" type="button">Download video</button>
         <button id="youtubeBtn" type="button" class="youtube-btn">YouTube</button>
+        <button id="playlistBtn" type="button" class="playlist-btn">Download playlist</button>
+      </div>
+
+      <div id="playlistSection" class="hidden-section">
+        <label for="playlistUrl">URL playlist YouTube</label>
+        <input id="playlistUrl" type="text" placeholder="https://www.youtube.com/playlist?list=..." />
+        <button id="playlistQueueBtn" type="button" class="playlist-queue-btn">Ajouter playlist</button>
       </div>
 
       <div id="youtubeSection" class="status-card status-card-youtube hidden-section">
@@ -72,6 +79,11 @@
           <span id="queueCount" class="status-chip status-chip-queue">0</span>
         </div>
         <ul id="queueList" class="status-list status-list-decimal"></ul>
+      </div>
+
+      <div class="job-controls">
+        <button id="stopBtn" type="button" class="danger-btn">Arreter download</button>
+        <button id="clearQueueBtn" type="button" class="danger-btn danger-btn-soft">Vider file</button>
       </div>
 
       <div id="statusMsg" class="status-message"></div>

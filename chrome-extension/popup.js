@@ -8,6 +8,12 @@ const cookieInput = document.getElementById("cookie");
 const detectBtn = document.getElementById("detectBtn");
 const sendBtn = document.getElementById("sendBtn");
 const youtubeBtn = document.getElementById("youtubeBtn");
+const playlistBtn = document.getElementById("playlistBtn");
+const playlistSection = document.getElementById("playlistSection");
+const playlistUrlInput = document.getElementById("playlistUrl");
+const playlistQueueBtn = document.getElementById("playlistQueueBtn");
+const stopBtn = document.getElementById("stopBtn");
+const clearQueueBtn = document.getElementById("clearQueueBtn");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const result = document.getElementById("result");
@@ -21,16 +27,21 @@ const youtubeVideoTitleEl = document.getElementById("youtubeVideoTitle");
 const DEFAULT_SERVER_URL = "http://localhost:3000/api/download";
 const DEFAULT_API_KEY = "125456Aprt";
 let activePoller = null;
+stopBtn.disabled = true;
+clearQueueBtn.disabled = true;
 
 function updateActionButtons(isYouTubePage) {
     if (isYouTubePage) {
         hideSection(sendBtn);
         showSection(youtubeBtn, "block");
+        showSection(playlistBtn, "block");
         return;
     }
 
     showSection(sendBtn, "block");
     hideSection(youtubeBtn);
+    hideSection(playlistBtn);
+    hideSection(playlistSection);
 }
 
 function buildServerOrigin(serverUrl) {
@@ -103,6 +114,8 @@ function renderDownloadState(state) {
     const timemark = state.timemark ? ` - ${state.timemark}` : "";
     const label = state.status === "completed"
         ? "100% - Termine"
+        : state.status === "cancelled"
+            ? "Arrete"
         : state.status === "failed"
             ? "Echec"
             : `${progress}%${timemark}`;
@@ -110,6 +123,7 @@ function renderDownloadState(state) {
     setProgress(state.status === "completed" ? 100 : progress, label);
 
     if (state.status === "running" || state.status === "queued") {
+        stopBtn.disabled = false;
         setResult({
             message: state.message || "Telechargement en cours",
             jobId: state.jobId,
@@ -121,6 +135,7 @@ function renderDownloadState(state) {
 
     if (state.status === "completed") {
         sendBtn.disabled = false;
+        stopBtn.disabled = true;
         setResult({
             message: state.message || "Telechargement termine",
             fileName: state.fileName,
@@ -133,6 +148,7 @@ function renderDownloadState(state) {
 
     if (state.status === "failed") {
         sendBtn.disabled = false;
+        stopBtn.disabled = true;
         setResult({
             message: state.message || "Echec",
             error: state.error || "Erreur inconnue"
@@ -140,7 +156,18 @@ function renderDownloadState(state) {
         return;
     }
 
+    if (state.status === "cancelled") {
+        sendBtn.disabled = false;
+        stopBtn.disabled = true;
+        setResult({
+            message: state.message || "Telechargement arrete",
+            error: state.error || ""
+        });
+        return;
+    }
+
     sendBtn.disabled = false;
+    stopBtn.disabled = true;
 }
 
 function renderActiveJobs(state) {
@@ -191,6 +218,7 @@ function renderQueue(items) {
     if (!section || !countEl || !listEl) return;
 
     countEl.textContent = items.length;
+    clearQueueBtn.disabled = items.length === 0;
 
     if (items.length === 0) {
         hideSection(section);
@@ -236,6 +264,17 @@ function startStatePolling() {
 async function getActiveTab() {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     return tabs[0];
+}
+
+function buildPlaylistUrlFromTab(tab) {
+    try {
+        const parsed = new URL(tab?.url || "");
+        const listId = parsed.searchParams.get("list");
+        if (!listId) return "";
+        return `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`;
+    } catch (_error) {
+        return "";
+    }
 }
 
 async function isActiveTabYouTube(tab) {
@@ -504,6 +543,104 @@ async function sendYouTubeToServer() {
     }
 }
 
+async function queueYouTubePlaylist() {
+    const playlistUrl = String(playlistUrlInput.value || "").trim();
+    const serverUrl = serverUrlInput.value.trim();
+    const apiKey = apiKeyInput.value.trim();
+
+    if (!playlistUrl || !serverUrl || !apiKey) {
+        setResult("Renseigne l'URL playlist, l'endpoint API et la cle API.");
+        return;
+    }
+
+    playlistQueueBtn.disabled = true;
+    setResult("Analyse de la playlist YouTube...");
+
+    try {
+        const tab = await getActiveTab();
+        const cookie = tab ? await (async () => {
+            try {
+                const resp = await chrome.runtime.sendMessage({ type: "getLatestUrl", tabId: tab.id });
+                return resp?.latest?.context?.cookie || "";
+            } catch (_e) { return ""; }
+        })() : "";
+
+        const response = await chrome.runtime.sendMessage({
+            type: "addYoutubePlaylistToQueue",
+            item: {
+                serverUrl,
+                apiKey,
+                playlistUrl,
+                headers: {
+                    referer: playlistUrl,
+                    userAgent: userAgentInput.value.trim(),
+                    cookie: cookie || cookieInput.value.trim()
+                }
+            }
+        });
+
+        if (!response?.ok) {
+            setResult({
+                message: "Echec playlist YouTube",
+                error: response?.error || "URL playlist invalide ou inaccessible"
+            });
+            playlistQueueBtn.disabled = false;
+            return;
+        }
+
+        setResult({
+            message: `${response.addedCount || 0} video(s) ajoutee(s) depuis la playlist`,
+            addedCount: response.addedCount || 0,
+            skippedCount: response.skippedCount || 0,
+            playlistTitle: response.playlistTitle || ""
+        });
+        renderQueue(response.queue || []);
+        playlistQueueBtn.disabled = false;
+        startStatePolling();
+    } catch (error) {
+        setResult(`Erreur playlist: ${error.message}`);
+        playlistQueueBtn.disabled = false;
+    }
+}
+
+async function stopCurrentDownload() {
+    stopBtn.disabled = true;
+
+    try {
+        const response = await chrome.runtime.sendMessage({ type: "stopCurrentDownload" });
+        if (!response?.ok) {
+            setResult({ message: "Echec arret", error: response?.error || "Erreur inconnue" });
+            return;
+        }
+
+        setResult("Arret du telechargement demande.");
+        await refreshDownloadState();
+    } catch (error) {
+        setResult(`Erreur arret: ${error.message}`);
+    } finally {
+        stopBtn.disabled = false;
+    }
+}
+
+async function clearPendingQueue() {
+    clearQueueBtn.disabled = true;
+
+    try {
+        const response = await chrome.runtime.sendMessage({ type: "clearPendingQueue" });
+        if (!response?.ok) {
+            setResult({ message: "Echec vidage file", error: response?.error || "Erreur inconnue" });
+            return;
+        }
+
+        setResult(`${response.clearedCount || 0} element(s) retires de la file.`);
+        await refreshDownloadState();
+    } catch (error) {
+        setResult(`Erreur file: ${error.message}`);
+    } finally {
+        clearQueueBtn.disabled = false;
+    }
+}
+
 detectBtn.addEventListener("click", async () => {
     await autoDetect();
     await saveSettings();
@@ -516,6 +653,28 @@ youtubeBtn.addEventListener("click", async () => {
     await saveSettings();
     await sendYouTubeToServer();
 });
+playlistBtn.addEventListener("click", async () => {
+    const tab = await getActiveTab();
+    const guessedPlaylistUrl = buildPlaylistUrlFromTab(tab);
+    if (guessedPlaylistUrl && !playlistUrlInput.value.trim()) {
+        playlistUrlInput.value = guessedPlaylistUrl;
+    }
+    if (playlistSection.classList.contains("hidden-section")) {
+        showSection(playlistSection);
+    } else {
+        hideSection(playlistSection);
+    }
+});
+playlistQueueBtn.addEventListener("click", async () => {
+    await saveSettings();
+    await queueYouTubePlaylist();
+});
+stopBtn.addEventListener("click", async () => {
+    await stopCurrentDownload();
+});
+clearQueueBtn.addEventListener("click", async () => {
+    await clearPendingQueue();
+});
 document.getElementById("saveConfigBtn").addEventListener("click", async () => {
     await saveSettings();
     const statusMsg = document.getElementById("statusMsg");
@@ -527,6 +686,10 @@ document.getElementById("saveConfigBtn").addEventListener("click", async () => {
 
 loadSettings().then(async () => {
     const activeTab = await getActiveTab();
+    const guessedPlaylistUrl = buildPlaylistUrlFromTab(activeTab);
+    if (guessedPlaylistUrl) {
+        playlistUrlInput.value = guessedPlaylistUrl;
+    }
     updateActionButtons(await isActiveTabYouTube(activeTab));
     await autoDetect();
     await checkYouTubeDetection();

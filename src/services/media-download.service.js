@@ -1,5 +1,5 @@
-const { downloadHlsToMp4 } = require("./ffmpeg.service");
-const { downloadDirectMp4 } = require("./direct-download.service");
+const { createHlsDownloadTask, downloadHlsToMp4 } = require("./ffmpeg.service");
+const { createDirectDownloadTask, downloadDirectMp4 } = require("./direct-download.service");
 
 function normalizeUrl(url) {
     return typeof url === "string" ? url.trim() : "";
@@ -32,20 +32,28 @@ function getExpectedUrlHint() {
 }
 
 function downloadMediaToMp4(url, headers = {}, hooks = {}, options = {}) {
+    return createDownloadTask(url, headers, hooks, options).promise;
+}
+
+function createDownloadTask(url, headers = {}, hooks = {}, options = {}) {
     const sourceType = getDownloadSourceType(url);
 
     if (sourceType === "hls") {
-        return downloadHlsToMp4(url, headers, hooks, options);
+        return createHlsDownloadTask(url, headers, hooks, options);
     }
 
     if (sourceType === "direct") {
-        return downloadDirectMp4(url, headers, hooks, options);
+        return createDirectDownloadTask(url, headers, hooks, options);
     }
 
-    return Promise.reject(new Error(getExpectedUrlHint()));
+    return {
+        promise: Promise.reject(new Error(getExpectedUrlHint())),
+        cancel: () => false
+    };
 }
 
 module.exports = {
+    createDownloadTask,
     downloadMediaToMp4,
     getDownloadSourceType,
     getExpectedUrlHint,
