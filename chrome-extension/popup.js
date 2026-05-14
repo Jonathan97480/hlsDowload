@@ -14,6 +14,8 @@ const playlistUrlInput = document.getElementById("playlistUrl");
 const playlistQueueBtn = document.getElementById("playlistQueueBtn");
 const stopBtn = document.getElementById("stopBtn");
 const clearQueueBtn = document.getElementById("clearQueueBtn");
+const recentToggleBtn = document.getElementById("recentToggleBtn");
+const recentBody = document.getElementById("recentBody");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const result = document.getElementById("result");
@@ -27,6 +29,7 @@ const youtubeVideoTitleEl = document.getElementById("youtubeVideoTitle");
 const DEFAULT_SERVER_URL = "http://localhost:3000/api/download";
 const DEFAULT_API_KEY = "125456Aprt";
 let activePoller = null;
+let recentExpanded = false;
 stopBtn.disabled = true;
 clearQueueBtn.disabled = true;
 
@@ -233,6 +236,105 @@ function renderQueue(items) {
     }).join("");
 }
 
+function inferRecentSource(job) {
+    if (String(job?.youtubeVideoId || "").trim() || /\/api\/download\/youtube/i.test(String(job?.serverUrl || ""))) {
+        return "youtube";
+    }
+    return "media";
+}
+
+function formatRecentStatus(job) {
+    switch (job?.status) {
+    case "completed":
+        return "Termine";
+    case "failed":
+        return "Echec";
+    case "cancelled":
+        return "Arrete";
+    case "queued":
+        return "En attente";
+    case "running":
+        return "En cours";
+    default:
+        return job?.status || "Inconnu";
+    }
+}
+
+function formatRecentPrimaryLine(job, index) {
+    const source = inferRecentSource(job);
+    if (source === "youtube") {
+        return job.fileName || job.message || `Video YouTube ${index + 1}`;
+    }
+    return job.fileName || job.message || `Video ${index + 1}`;
+}
+
+function formatRecentMeta(job) {
+    const source = inferRecentSource(job);
+    const meta = [];
+
+    if (source === "youtube") {
+        meta.push("Source: YouTube");
+        if (job.youtubeVideoId) {
+            meta.push(`Video ID: ${job.youtubeVideoId}`);
+        }
+    } else {
+        meta.push("Source: MP4 / HLS");
+    }
+
+    meta.push(`Statut: ${formatRecentStatus(job)}`);
+
+    if (job.sourceIp) {
+        meta.push(`IP: ${job.sourceIp}`);
+    }
+
+    if (job.error) {
+        meta.push(`Erreur: ${job.error}`);
+    } else if (job.message) {
+        meta.push(job.message);
+    }
+
+    return meta.join(" | ");
+}
+
+function renderRecentJobs(items) {
+    const section = document.getElementById("recentSection");
+    const countEl = document.getElementById("recentCount");
+    const listEl = document.getElementById("recentList");
+
+    if (!section || !countEl || !listEl) {
+        return;
+    }
+
+    const recent = Array.isArray(items) ? items.slice(0, 5) : [];
+    countEl.textContent = String(recent.length);
+
+    if (recent.length === 0) {
+        hideSection(section);
+        hideSection(recentBody);
+        listEl.innerHTML = "";
+        return;
+    }
+
+    showSection(section);
+    if (recentExpanded) {
+        showSection(recentBody);
+    } else {
+        hideSection(recentBody);
+    }
+    listEl.innerHTML = recent.map((job, index) => {
+        const source = inferRecentSource(job) === "youtube" ? "YouTube" : "MP4/HLS";
+        const primary = formatRecentPrimaryLine(job, index);
+        const meta = formatRecentMeta(job);
+        return [
+            '<li class="recent-item">',
+            `<span class="recent-type">${escapeHtml(source)}</span>`,
+            `<strong>${escapeHtml(primary)}</strong>`,
+            `<span class="recent-meta">${escapeHtml(meta)}</span>`,
+            "</li>"
+        ].join("");
+    }).join("");
+}
+
 function escapeHtml(str) {
     return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -246,8 +348,10 @@ async function refreshDownloadState() {
         renderDownloadState(state);
         renderActiveJobs(state);
         renderQueue(state.queue || queueResp?.queue || []);
+        renderRecentJobs(state.recentJobs || []);
     } else if (queueResp?.ok) {
         renderQueue(queueResp.queue || []);
+        renderRecentJobs([]);
     }
 }
 
@@ -674,6 +778,14 @@ stopBtn.addEventListener("click", async () => {
 });
 clearQueueBtn.addEventListener("click", async () => {
     await clearPendingQueue();
+});
+recentToggleBtn.addEventListener("click", () => {
+    recentExpanded = !recentExpanded;
+    if (recentExpanded) {
+        showSection(recentBody);
+    } else {
+        hideSection(recentBody);
+    }
 });
 document.getElementById("saveConfigBtn").addEventListener("click", async () => {
     await saveSettings();

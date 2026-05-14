@@ -81,6 +81,18 @@
         <ul id="queueList" class="status-list status-list-decimal"></ul>
       </div>
 
+      <div id="recentSection" class="status-card status-card-recent hidden-section">
+        <button id="recentToggleBtn" type="button" class="recent-toggle-btn">
+          <div class="status-card-header">
+            <span class="status-card-title">Telechargements recents</span>
+            <span id="recentCount" class="status-chip status-chip-recent">0</span>
+          </div>
+        </button>
+        <div id="recentBody" class="hidden-section">
+          <ul id="recentList" class="status-list status-list-disc"></ul>
+        </div>
+      </div>
+
       <div class="job-controls">
         <button id="stopBtn" type="button" class="danger-btn">Arreter download</button>
         <button id="clearQueueBtn" type="button" class="danger-btn danger-btn-soft">Vider file</button>

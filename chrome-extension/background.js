@@ -303,6 +303,7 @@ async function startQueuedJobsInternal(state) {
                 jobId: data.jobId,
                 fileName: data.fileName || item.body?.fileName || "",
                 filePath: data.filePath || "",
+                sourceIp: data.sourceIp || "",
                 status: data.status || "queued",
                 progress: data.status === "completed" ? 100 : 0,
                 timemark: "",
@@ -384,6 +385,7 @@ async function pollActiveJobs() {
                     message: data.message || "",
                     fileName: data.fileName || job.fileName || "",
                     filePath: data.filePath || job.filePath || "",
+                    sourceIp: data.sourceIp || job.sourceIp || "",
                     error: data.error || ""
                 };
 
@@ -832,6 +834,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         message: firstActive?.message || latestRecent?.message || "",
                         fileName: firstActive?.fileName || latestRecent?.fileName || "",
                         filePath: firstActive?.filePath || latestRecent?.filePath || "",
+                        sourceIp: firstActive?.sourceIp || latestRecent?.sourceIp || "",
                         error: firstActive?.error || latestRecent?.error || ""
                     }
                 });

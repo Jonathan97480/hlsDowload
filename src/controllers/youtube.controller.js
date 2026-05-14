@@ -13,10 +13,7 @@ const {
     findCompletedDownload
 } = require("../services/download-job.service");
 const { ensureDiskSpaceForDownload } = require("../services/storage-guard.service");
-
-function sanitizeString(value) {
-    return typeof value === "string" ? value.trim() : "";
-}
+const { buildDownloadContext, sanitizeString } = require("../services/request-context.service");
 
 function buildRequestHeaders(rawHeaders) {
     const source = rawHeaders && typeof rawHeaders === "object" ? rawHeaders : {};
@@ -106,6 +103,7 @@ function startYouTubeDownload(req, res) {
     const ffmpegHeaders = buildRequestHeaders(req.body.headers);
     const maxTitleLength = getMaxTitleLengthSetting();
     const preferredName = buildPreferredName(req.body.fileName, maxTitleLength);
+    const downloadContext = buildDownloadContext(req);
 
     const diskCheck = ensureDiskSpaceForDownload();
     if (!diskCheck.ok) {
@@ -121,7 +119,8 @@ function startYouTubeDownload(req, res) {
     const job = runDownloadJob({
         url: `youtube:${id}`,
         headers: ffmpegHeaders,
-        preferredName
+        preferredName,
+        ...downloadContext
     });
 
     const statusCode = job.status === "completed" ? 200 : 202;
@@ -131,7 +130,8 @@ function startYouTubeDownload(req, res) {
         jobId: job.jobId,
         status: job.status,
         fileName: job.fileName,
-        filePath: job.filePath
+        filePath: job.filePath,
+        sourceIp: job.sourceIp || ""
     });
 }
 
@@ -155,6 +155,7 @@ function getYouTubeStatus(req, res) {
             message: row.message || "",
             fileName: row.file_name || "",
             filePath: row.file_path || "",
+            sourceIp: row.source_ip || "",
             ffmpegMode: row.ffmpeg_mode || "",
             error: row.error || ""
         };
@@ -168,6 +169,7 @@ function getYouTubeStatus(req, res) {
         message: job.message,
         fileName: job.fileName,
         filePath: job.filePath,
+        sourceIp: job.sourceIp || "",
         ffmpegMode: job.ffmpegMode || "",
         error: job.error
     });
