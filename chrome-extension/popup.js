@@ -22,6 +22,17 @@ const DEFAULT_SERVER_URL = "http://localhost:3000/api/download";
 const DEFAULT_API_KEY = "125456Aprt";
 let activePoller = null;
 
+function updateActionButtons(isYouTubePage) {
+    if (isYouTubePage) {
+        hideSection(sendBtn);
+        showSection(youtubeBtn, "block");
+        return;
+    }
+
+    showSection(sendBtn, "block");
+    hideSection(youtubeBtn);
+}
+
 function buildServerOrigin(serverUrl) {
     try {
         return new URL(serverUrl).origin;
@@ -227,6 +238,19 @@ async function getActiveTab() {
     return tabs[0];
 }
 
+async function isActiveTabYouTube(tab) {
+    if (!tab?.id) {
+        return false;
+    }
+
+    try {
+        const response = await chrome.tabs.sendMessage(tab.id, { type: "checkYouTube" });
+        return response?.ok && response.isYouTube === true;
+    } catch (_error) {
+        return false;
+    }
+}
+
 async function loadSettings() {
     const stored = await chrome.storage.local.get(["serverUrl", "apiKey", "referer", "userAgent", "cookie", "videoName"]);
     serverUrlInput.value = stored.serverUrl || DEFAULT_SERVER_URL;
@@ -335,6 +359,8 @@ async function autoDetect() {
             return;
         }
 
+        updateActionButtons(await isActiveTabYouTube(tab));
+
         if (tab.title) {
             videoNameInput.value = normalizeVideoName(tab.title);
         }
@@ -416,6 +442,7 @@ async function checkYouTubeDetection() {
             return response.video;
         }
     } catch (_error) { }
+    hideSection(youtubeSection);
     return null;
 }
 
@@ -499,6 +526,8 @@ document.getElementById("saveConfigBtn").addEventListener("click", async () => {
 });
 
 loadSettings().then(async () => {
+    const activeTab = await getActiveTab();
+    updateActionButtons(await isActiveTabYouTube(activeTab));
     await autoDetect();
     await checkYouTubeDetection();
 }).catch((error) => {

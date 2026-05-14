@@ -3,8 +3,7 @@ const { getSettings } = require("../services/admin-store.service");
 const {
     runDownloadJob,
     getJob,
-    findCompletedDownload,
-    getCapacitySnapshot
+    findCompletedDownload
 } = require("../services/download-job.service");
 const { ensureDiskSpaceForDownload } = require("../services/storage-guard.service");
 
@@ -112,137 +111,21 @@ function startYouTubeDownload(req, res) {
         });
     }
 
-    const { v4: uuidv4 } = require("uuid");
-    const { getDb } = require("../services/sqlite.service");
-    const db = getDb();
-
-    const jobId = uuidv4();
-    const now = Date.now();
-    const requestKey = JSON.stringify({ url: `youtube:${id}`, preferredName, headers: ffmpegHeaders });
-
-    const job = {
-        jobId,
+    const job = runDownloadJob({
         url: `youtube:${id}`,
-        preferredName,
         headers: ffmpegHeaders,
-        status: "queued",
-        progress: 0,
-        timemark: "",
-        message: "En attente (YouTube)",
-        fileName: "",
-        filePath: "",
-        ffmpegMode: "",
-        fileSizeBytes: 0,
-        sourceIp: "",
-        clientId: "",
-        userAgent: "",
-        startedAt: 0,
-        completedAt: 0,
-        durationMs: 0,
-        error: "",
-        updatedAt: now,
-        createdAt: now
-    };
+        preferredName
+    });
 
-    const upsertStmt = db.prepare(`
-        INSERT INTO jobs (
-            job_id, request_key, url, preferred_name, headers_json, status, progress,
-            timemark, message, file_name, file_path, ffmpeg_mode, file_size_bytes, source_ip,
-            client_id, user_agent, started_at, completed_at, duration_ms, error,
-            updated_at, created_at
-        ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        )
-    `);
-    upsertStmt.run(
-        job.jobId, requestKey, job.url, job.preferredName, JSON.stringify(job.headers),
-        job.status, job.progress, job.timemark, job.message, job.fileName, job.filePath,
-        job.ffmpegMode, job.fileSizeBytes, job.sourceIp, job.clientId, job.userAgent,
-        job.startedAt, job.completedAt, job.durationMs, job.error, job.updatedAt, job.createdAt
-    );
+    const statusCode = job.status === "completed" ? 200 : 202;
 
-    runYouTubeJob(job);
-
-    return res.status(202).json({
-        message: "Job YouTube demarre",
+    return res.status(statusCode).json({
+        message: job.status === "completed" ? "Fichier deja disponible" : "Job YouTube demarre",
         jobId: job.jobId,
         status: job.status,
         fileName: job.fileName,
         filePath: job.filePath
     });
-}
-
-function runYouTubeJob(job) {
-    const startedAt = Date.now();
-
-    const fs = require("fs");
-    const { getDb } = require("../services/sqlite.service");
-    const db = getDb();
-
-    function updateJobDb(patch) {
-        const merged = { ...job, ...patch, updatedAt: Date.now() };
-        Object.assign(job, merged);
-
-        db.prepare(`
-            UPDATE jobs SET status=?, progress=?, timemark=?, message=?, file_name=?,
-                file_path=?, ffmpeg_mode=?, file_size_bytes=?, completed_at=?, duration_ms=?,
-                error=?, updated_at=?
-            WHERE job_id=?
-        `).run(
-            job.status, job.progress, job.timemark, job.message, job.fileName,
-            job.filePath, job.ffmpegMode, job.fileSizeBytes, job.completedAt,
-            job.durationMs, job.error, job.updatedAt, job.jobId
-        );
-        return job;
-    }
-
-    updateJobDb({ status: "running", startedAt, message: "Telechargement YouTube demarre" });
-
-    downloadYouTubeVideo(job.url.replace("youtube:", ""), job.headers || {}, {
-        onStart: () => {
-            updateJobDb({ status: "running", message: "yt-dlp en cours" });
-        },
-        onProgress: (progress) => {
-            const pct = Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, Math.round(progress.percent))) : 0;
-            updateJobDb({
-                status: "running",
-                progress: pct,
-                timemark: progress.timemark || "",
-                message: pct > 0 ? `YouTube ${pct}%` : "Traitement YouTube"
-            });
-        }
-    }, {
-        preferredName: job.preferredName || ""
-    })
-        .then((result) => {
-            const completedAt = Date.now();
-            let fileSizeBytes = 0;
-            try {
-                const stat = fs.statSync(result.outputPath);
-                fileSizeBytes = stat.size;
-            } catch (_e) { /* ignore */ }
-
-            updateJobDb({
-                status: "completed",
-                progress: 100,
-                completedAt,
-                durationMs: startedAt ? completedAt - startedAt : 0,
-                fileSizeBytes,
-                message: "Telechargement YouTube termine",
-                fileName: result.outputFileName,
-                filePath: result.filePath,
-                ffmpegMode: "yt-dlp"
-            });
-        })
-        .catch((error) => {
-            updateJobDb({
-                status: "failed",
-                completedAt: Date.now(),
-                durationMs: startedAt ? Date.now() - startedAt : 0,
-                message: "Echec YouTube",
-                error: error.message || "Erreur yt-dlp"
-            });
-        });
 }
 
 function getYouTubeStatus(req, res) {

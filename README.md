@@ -67,6 +67,38 @@ ADMIN_DEFAULT_USERNAME=admin
 ADMIN_DEFAULT_PASSWORD=admin123
 ```
 
+### Configurer `YT_DLP_PATH`
+
+Le serveur lance `yt-dlp` via `child_process`. Si `yt-dlp` n'est pas resolu par le `PATH` du process Node, il faut definir `YT_DLP_PATH` explicitement.
+
+Exemples:
+
+- Windows local:
+
+```env
+YT_DLP_PATH=C:\Users\votre-user\AppData\Local\Programs\Python\Python312\Scripts\yt-dlp.exe
+```
+
+- Linux natif:
+
+```env
+YT_DLP_PATH=/usr/local/bin/yt-dlp
+```
+
+- Docker / Linux:
+
+```env
+YT_DLP_PATH=/usr/local/bin/yt-dlp
+```
+
+Verification conseillee avant de lancer le serveur:
+
+```bash
+yt-dlp --version
+```
+
+Si cette commande echoue dans l'environnement cible, le telechargement YouTube echouera aussi.
+
 ## Installation
 
 1. Copier le fichier d'environnement:
@@ -104,6 +136,12 @@ cd <votre-repo>
 cp .env.example .env
 npm install --omit=dev
 npm start
+```
+
+Si `yt-dlp` n'est pas dans le `PATH` du service, ajouter dans `.env`:
+
+```env
+YT_DLP_PATH=/usr/local/bin/yt-dlp
 ```
 
 Recommandation production (service systemd):
@@ -144,7 +182,7 @@ Persistance a sauvegarder:
 
 ## Deploiement Docker
 
-Vous pouvez conteneuriser le projet avec FFmpeg et yt-dlp inclus.
+En production Docker sous Linux, il faut que l'image contienne `yt-dlp` et que le chemin utilise par l'application corresponde au binaire present dans le conteneur.
 
 Exemple `Dockerfile`:
 
@@ -164,10 +202,13 @@ RUN npm ci --omit=dev
 COPY . .
 
 ENV NODE_ENV=production
+ENV YT_DLP_PATH=/usr/local/bin/yt-dlp
 EXPOSE 3000
 
 CMD ["npm", "start"]
 ```
+
+Le chemin `/usr/local/bin/yt-dlp` est l'exemple recommande quand `yt-dlp` est installe dans l'image via `pip3`.
 
 Build + run:
 
@@ -177,6 +218,7 @@ docker run -d \
   --name hls-downloader \
   -p 3000:3000 \
   --env-file .env \
+  -e YT_DLP_PATH=/usr/local/bin/yt-dlp \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/downloads:/app/downloads \
   hls-downloader:latest
@@ -193,6 +235,8 @@ services:
       - "3000:3000"
     env_file:
       - .env
+    environment:
+      YT_DLP_PATH: /usr/local/bin/yt-dlp
     restart: unless-stopped
     volumes:
       - ./data:/app/data
@@ -209,6 +253,8 @@ Important Docker:
 
 - Ne pas oublier les volumes `data` et `downloads` pour conserver l'etat.
 - Si `FFMPEG_PATH` est defini, verifier qu'il pointe vers un chemin valide dans le conteneur.
+- Si `YT_DLP_PATH` est defini, verifier qu'il pointe vers le vrai binaire dans le conteneur, typiquement `/usr/local/bin/yt-dlp`.
+- Si l'image finale n'installe pas `yt-dlp`, tous les downloads YouTube echoueront avec une erreur du type `spawn yt-dlp ENOENT`.
 - `restart: unless-stopped` permet au conteneur de redemarrer automatiquement apres un reboot du serveur Docker.
 - Le depot inclut maintenant un `.dockerignore` pour reduire la taille du contexte de build.
 - yt-dlp est installe dans l'image Docker via pip3.

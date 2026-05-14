@@ -6,6 +6,7 @@ const { getSystemMetrics } = require("./system-metrics.service");
 const { getDb } = require("./sqlite.service");
 const { ensureDiskSpaceForDownload } = require("./storage-guard.service");
 const { downloadMediaToMp4, getDownloadSourceType } = require("./media-download.service");
+const { downloadYouTubeVideo } = require("./youtube-download.service");
 
 const db = getDb();
 const jobs = new Map();
@@ -430,9 +431,21 @@ function startQueuedJob(job) {
 
     const settings = getSettings();
 
-    const sourceType = getDownloadSourceType(job.url);
+    const sourceType = typeof job.url === "string" && job.url.startsWith("youtube:")
+        ? "youtube"
+        : getDownloadSourceType(job.url);
+    const executor = sourceType === "youtube"
+        ? runQueuedYouTubeDownload(job, startedAt)
+        : runQueuedMediaDownload(job, startedAt, settings, sourceType);
 
-    downloadMediaToMp4(job.url, job.headers || {}, {
+    executor.finally(() => {
+        activeJobs = Math.max(0, activeJobs - 1);
+        processQueue();
+    });
+}
+
+function runQueuedMediaDownload(job, startedAt, settings, sourceType) {
+    return downloadMediaToMp4(job.url, job.headers || {}, {
         onStart: () => {
             finalizeJob(job.jobId, {
                 status: "running",
@@ -485,10 +498,62 @@ function startQueuedJob(job) {
                 message: "Echec du telechargement",
                 error: error.message || "Erreur interne"
             });
+        });
+}
+
+function runQueuedYouTubeDownload(job, startedAt) {
+    return downloadYouTubeVideo(job.url.replace("youtube:", ""), job.headers || {}, {
+        onStart: () => {
+            finalizeJob(job.jobId, {
+                status: "running",
+                message: "yt-dlp en cours"
+            });
+        },
+        onProgress: (progress) => {
+            const safePercent = Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, Math.round(progress.percent))) : 0;
+
+            finalizeJob(job.jobId, {
+                status: "running",
+                progress: safePercent,
+                timemark: progress.timemark || "",
+                message: safePercent > 0 ? `YouTube ${safePercent}%` : "Traitement YouTube"
+            });
+        }
+    }, {
+        preferredName: job.preferredName || ""
+    })
+        .then((result) => {
+            const completedAt = Date.now();
+            const durationMs = startedAt ? completedAt - startedAt : 0;
+            let fileSizeBytes = 0;
+
+            try {
+                const outputStat = fs.statSync(result.outputPath);
+                fileSizeBytes = outputStat.size;
+            } catch (_error) {
+                fileSizeBytes = 0;
+            }
+
+            finalizeJob(job.jobId, {
+                status: "completed",
+                progress: 100,
+                completedAt,
+                durationMs,
+                fileSizeBytes,
+                message: "Telechargement YouTube termine",
+                fileName: result.outputFileName,
+                filePath: result.filePath,
+                ffmpegMode: "yt-dlp"
+            });
         })
-        .finally(() => {
-            activeJobs = Math.max(0, activeJobs - 1);
-            processQueue();
+        .catch((error) => {
+            finalizeJob(job.jobId, {
+                status: "failed",
+                completedAt: Date.now(),
+                durationMs: startedAt ? Date.now() - startedAt : 0,
+                message: "Echec YouTube",
+                error: error.message || "Erreur yt-dlp"
+            });
         });
 }
 
