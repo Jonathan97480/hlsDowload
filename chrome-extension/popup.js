@@ -7,12 +7,16 @@ const userAgentInput = document.getElementById("userAgent");
 const cookieInput = document.getElementById("cookie");
 const detectBtn = document.getElementById("detectBtn");
 const sendBtn = document.getElementById("sendBtn");
+const youtubeBtn = document.getElementById("youtubeBtn");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 const result = document.getElementById("result");
 const mediaUrlSection = document.getElementById("mediaUrlSection");
 const activeSection = document.getElementById("activeSection");
 const queueSection = document.getElementById("queueSection");
+const youtubeSection = document.getElementById("youtubeSection");
+const youtubeVideoIdEl = document.getElementById("youtubeVideoId");
+const youtubeVideoTitleEl = document.getElementById("youtubeVideoTitle");
 
 const DEFAULT_SERVER_URL = "http://localhost:3000/api/download";
 const DEFAULT_API_KEY = "125456Aprt";
@@ -402,6 +406,77 @@ async function sendToServer() {
     }
 }
 
+async function checkYouTubeDetection() {
+    try {
+        const response = await chrome.runtime.sendMessage({ type: "getYoutubeVideo" });
+        if (response?.ok && response.video?.videoId) {
+            youtubeVideoIdEl.textContent = response.video.videoId;
+            youtubeVideoTitleEl.textContent = response.video.videoTitle || "";
+            showSection(youtubeSection);
+            return response.video;
+        }
+    } catch (_error) { }
+    return null;
+}
+
+async function sendYouTubeToServer() {
+    const video = await checkYouTubeDetection();
+    if (!video || !video.videoId) {
+        setResult("Aucune video YouTube detectee. Ouvre une video YouTube d'abord.");
+        return;
+    }
+
+    const serverUrl = serverUrlInput.value.trim();
+    const apiKey = apiKeyInput.value.trim();
+
+    if (!serverUrl || !apiKey) {
+        setResult("Renseigne l'endpoint API et la cle API.");
+        return;
+    }
+
+    youtubeBtn.disabled = true;
+    setResult("Ajout YouTube a la file d'attente...");
+
+    try {
+        const tab = await getActiveTab();
+        const cookie = tab ? await (async () => {
+            try {
+                const resp = await chrome.runtime.sendMessage({ type: "getLatestUrl", tabId: tab.id });
+                return resp?.latest?.context?.cookie || "";
+            } catch (_e) { return ""; }
+        })() : "";
+
+        const response = await chrome.runtime.sendMessage({
+            type: "addYoutubeToQueue",
+            item: {
+                serverUrl,
+                apiKey,
+                videoId: video.videoId,
+                videoTitle: video.videoTitle || "",
+                headers: {
+                    referer: video.url || "",
+                    userAgent: userAgentInput.value.trim(),
+                    cookie: cookie || cookieInput.value.trim()
+                }
+            }
+        });
+
+        if (!response?.ok) {
+            setResult({ message: "Echec ajout YouTube", error: response?.error || "Erreur inconnue" });
+            youtubeBtn.disabled = false;
+            return;
+        }
+
+        setResult("Telechargement YouTube demarre.");
+        renderQueue(response.queue || []);
+        youtubeBtn.disabled = false;
+        startStatePolling();
+    } catch (error) {
+        setResult(`Erreur YouTube: ${error.message}`);
+        youtubeBtn.disabled = false;
+    }
+}
+
 detectBtn.addEventListener("click", async () => {
     await autoDetect();
     await saveSettings();
@@ -409,6 +484,10 @@ detectBtn.addEventListener("click", async () => {
 sendBtn.addEventListener("click", async () => {
     await saveSettings();
     await sendToServer();
+});
+youtubeBtn.addEventListener("click", async () => {
+    await saveSettings();
+    await sendYouTubeToServer();
 });
 document.getElementById("saveConfigBtn").addEventListener("click", async () => {
     await saveSettings();
@@ -419,7 +498,10 @@ document.getElementById("saveConfigBtn").addEventListener("click", async () => {
     }
 });
 
-loadSettings().then(autoDetect).catch((error) => {
+loadSettings().then(async () => {
+    await autoDetect();
+    await checkYouTubeDetection();
+}).catch((error) => {
     setResult(`Initialisation echouee: ${error.message}`);
 });
 

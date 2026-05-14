@@ -181,8 +181,19 @@ async function resolvePublicIp() {
 }
 
 async function fetchCapacity(serverUrl, apiKey) {
+    const rawUrl = String(serverUrl || "").trim();
+    let capacityUrl = `${rawUrl}/capacity`;
+
+    if (/\/api\/download\/youtube$/i.test(rawUrl)) {
+        capacityUrl = rawUrl.replace(/\/api\/download\/youtube$/i, "/api/download/capacity");
+    } else if (/\/api\/download$/i.test(rawUrl)) {
+        capacityUrl = `${rawUrl}/capacity`;
+    } else if (/\/api$/i.test(rawUrl)) {
+        capacityUrl = `${rawUrl}/download/capacity`;
+    }
+
     try {
-        const response = await fetch(`${serverUrl}/capacity`, {
+        const response = await fetch(capacityUrl, {
             method: "GET",
             headers: { "x-api-key": apiKey }
         });
@@ -200,17 +211,42 @@ async function fetchCapacity(serverUrl, apiKey) {
 
 async function downloadCompletedFile(job) {
     if (!job.filePath || !job.fileName || !job.serverOrigin) {
-        return;
+        return { ok: false, error: "Chemin de telechargement incomplet" };
     }
 
     try {
+        const downloadUrl = new URL(job.filePath, job.serverOrigin).toString();
+        const probe = await fetch(downloadUrl, {
+            method: "GET",
+            headers: { Range: "bytes=0-0" }
+        });
+        const contentType = String(probe.headers.get("content-type") || "").toLowerCase();
+
+        if (!probe.ok) {
+            return {
+                ok: false,
+                error: `Fichier indisponible (${probe.status})`
+            };
+        }
+
+        if (contentType.includes("application/json")) {
+            return {
+                ok: false,
+                error: "Le serveur a renvoye du JSON au lieu de la video"
+            };
+        }
+
         await chrome.downloads.download({
-            url: `${job.serverOrigin}${job.filePath}`,
+            url: downloadUrl,
             filename: job.fileName,
             saveAs: false
         });
+        return { ok: true };
     } catch (_error) {
-        // Silent failure: final state remains completed.
+        return {
+            ok: false,
+            error: _error && _error.message ? _error.message : "Echec du telechargement navigateur"
+        };
     }
 }
 
@@ -274,7 +310,11 @@ async function startQueuedJobsInternal(state) {
             };
 
             if (job.status === "completed") {
-                await downloadCompletedFile(job);
+                const downloadResult = await downloadCompletedFile(job);
+                if (!downloadResult.ok) {
+                    job.message = "Telechargement termine, envoi navigateur echoue";
+                    job.error = downloadResult.error || "";
+                }
                 state.recentJobs.unshift(job);
             } else {
                 state.activeJobs.push(job);
@@ -347,7 +387,11 @@ async function pollActiveJobs() {
                 };
 
                 if (nextJob.status === "completed") {
-                    await downloadCompletedFile(nextJob);
+                    const downloadResult = await downloadCompletedFile(nextJob);
+                    if (!downloadResult.ok) {
+                        nextJob.message = "Telechargement termine, envoi navigateur echoue";
+                        nextJob.error = downloadResult.error || "";
+                    }
                     state.recentJobs.unshift(nextJob);
                 } else if (nextJob.status === "failed") {
                     state.recentJobs.unshift(nextJob);
@@ -467,7 +511,82 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 hydrateFromStorage().catch(() => { });
 
+const YOUTUBE_KEY = "youtubeVideoCache";
+
+async function getYoutubeCache() {
+    const stored = await chrome.storage.local.get(YOUTUBE_KEY);
+    return stored?.[YOUTUBE_KEY] || { videoId: "", videoTitle: "", url: "" };
+}
+
+async function saveYoutubeCache(data) {
+    await chrome.storage.local.set({ [YOUTUBE_KEY]: data });
+}
+
+function buildYoutubeServerUrl(serverUrl) {
+    const base = String(serverUrl || "").trim().replace(/\/$/, "");
+    if (!base) return "";
+    if (/\/api\/download\/?$/.test(base)) return base.replace(/\/api\/download\/?$/, "/api/download/youtube");
+    if (/\/api\/?$/.test(base)) return `${base}/download/youtube`;
+    return `${base}/api/download/youtube`;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === "youtubeDetected") {
+        const data = {
+            videoId: message.videoId || "",
+            videoTitle: message.videoTitle || "",
+            url: message.url || "",
+            context: message.context || {}
+        };
+        saveYoutubeCache(data);
+        sendResponse({ ok: true });
+        return;
+    }
+
+    if (message?.type === "getYoutubeVideo") {
+        getYoutubeCache().then((data) => sendResponse({ ok: true, video: data })).catch(() => sendResponse({ ok: false }));
+        return true;
+    }
+
+    if (message?.type === "addYoutubeToQueue") {
+        const item = message.item || {};
+        const serverUrl = String(item.serverUrl || "").trim();
+        const apiKey = String(item.apiKey || "").trim();
+        const videoId = String(item.videoId || "").trim();
+        const videoTitle = String(item.videoTitle || "").trim();
+
+        if (!serverUrl || !apiKey || !videoId) {
+            sendResponse({ ok: false, error: "videoId, serverUrl et apiKey requis" });
+            return;
+        }
+
+        const youtubeServerUrl = buildYoutubeServerUrl(serverUrl);
+
+        withManagerLock(async () => {
+            const state = await getManagerState();
+            state.queue.push({
+                id: crypto.randomUUID(),
+                createdAt: Date.now(),
+                serverUrl: youtubeServerUrl,
+                apiKey,
+                youtubeVideoId: videoId,
+                body: {
+                    videoId,
+                    fileName: videoTitle,
+                    headers: item.headers || {}
+                }
+            });
+            await startQueuedJobsInternal(state);
+            await saveManagerState(state);
+            if (state.activeJobs.length > 0) {
+                schedulePoll(1000);
+            }
+            sendResponse({ ok: true, queue: state.queue, state });
+        }).catch((error) => sendResponse({ ok: false, error: error.message || "Erreur file YouTube" }));
+
+        return true;
+    }
+
     if (message?.type === "captureUrl") {
         rememberUrl(sender.tab?.id ?? -1, message.url, message.context || {});
         sendResponse({ ok: true });

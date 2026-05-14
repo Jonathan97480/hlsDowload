@@ -1,10 +1,11 @@
 # HLS Downloader Server
 
-API Node.js/Express qui convertit un flux HLS `.m3u8` en `.mp4` via FFmpeg.
+API Node.js/Express qui convertit un flux HLS `.m3u8` en `.mp4` via FFmpeg, et telecharge des videos YouTube via yt-dlp.
 
 Le projet inclut:
 
 - API de telechargement HLS -> MP4
+- API de telechargement YouTube (via yt-dlp)
 - Interface admin (`/admin`) avec dashboard temps reel
 - Extension Chrome (`chrome-extension/`)
 - Persistance SQLite (`data/app.db`) pour admin/sessions/settings/jobs/historique
@@ -14,6 +15,30 @@ Le projet inclut:
 
 - Node.js 18+
 - FFmpeg installe et accessible en ligne de commande
+- **yt-dlp** installe et accessible en ligne de commande (pour le support YouTube)
+
+### Installation de yt-dlp
+
+```bash
+# Via pip (recommande)
+pip install yt-dlp
+
+# Via pip3
+pip3 install yt-dlp
+
+# Via brew (macOS)
+brew install yt-dlp
+
+# Via apt (Debian/Ubuntu) - necessite un PPA tiers
+sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+sudo chmod a+rx /usr/local/bin/yt-dlp
+```
+
+Verifier l'installation:
+
+```bash
+yt-dlp --version
+```
 
 ## Variables d'environnement
 
@@ -22,6 +47,7 @@ Variables principales (voir `.env.example`):
 - `PORT`: port HTTP du serveur (defaut `3000`)
 - `API_KEY`: cle API requise pour les endpoints de download
 - `FFMPEG_PATH`: chemin absolu vers binaire ffmpeg (optionnel)
+- `YT_DLP_PATH`: chemin absolu vers binaire yt-dlp (optionnel, defaut `yt-dlp`)
 - `DISK_MIN_FREE_PERCENT`: seuil mini d'espace libre disque (defaut `5`)
 
 Variables admin optionnelles:
@@ -35,6 +61,7 @@ Exemple:
 PORT=3000
 API_KEY=change-moi
 FFMPEG_PATH=
+YT_DLP_PATH=
 DISK_MIN_FREE_PERCENT=5
 ADMIN_DEFAULT_USERNAME=admin
 ADMIN_DEFAULT_PASSWORD=admin123
@@ -50,6 +77,7 @@ ADMIN_DEFAULT_PASSWORD=admin123
 2. Renseigner `API_KEY` dans `.env`
 3. Installer les dependances:
    - `npm install`
+4. Installer yt-dlp (voir section ci-dessus)
 
 ## Lancer le serveur
 
@@ -64,9 +92,12 @@ Exemple rapide Ubuntu/Debian:
 
 ```bash
 sudo apt update
-sudo apt install -y ffmpeg curl build-essential
+sudo apt install -y ffmpeg curl build-essential python3-pip
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
+
+# Installer yt-dlp
+sudo pip3 install yt-dlp
 
 git clone <votre-repo>
 cd <votre-repo>
@@ -113,7 +144,7 @@ Persistance a sauvegarder:
 
 ## Deploiement Docker
 
-Vous pouvez conteneuriser le projet avec FFmpeg inclus.
+Vous pouvez conteneuriser le projet avec FFmpeg et yt-dlp inclus.
 
 Exemple `Dockerfile`:
 
@@ -121,8 +152,9 @@ Exemple `Dockerfile`:
 FROM node:20-bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends ffmpeg python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir --break-system-packages yt-dlp
 
 WORKDIR /app
 
@@ -179,6 +211,7 @@ Important Docker:
 - Si `FFMPEG_PATH` est defini, verifier qu'il pointe vers un chemin valide dans le conteneur.
 - `restart: unless-stopped` permet au conteneur de redemarrer automatiquement apres un reboot du serveur Docker.
 - Le depot inclut maintenant un `.dockerignore` pour reduire la taille du contexte de build.
+- yt-dlp est installe dans l'image Docker via pip3.
 
 ## API
 
@@ -246,6 +279,92 @@ Reponse succes:
 - Header requis: `x-api-key`
 - Reponse: statut du job (`queued`, `running`, `completed`, `failed`) + `progress` (0-100)
 
+### Telechargement YouTube
+
+`POST /api/download/youtube`
+
+Telechargement synchrone d'une video YouTube.
+
+Headers obligatoires:
+
+- `x-api-key: <votre-cle>`
+- `Content-Type: application/json`
+
+Body JSON:
+
+```json
+{
+  "videoId": "dQw4w9WgXcQ",
+  "fileName": "Ma video",
+  "headers": {
+    "cookie": "name=value"
+  }
+}
+```
+
+Ou avec une URL YouTube:
+
+```json
+{
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "fileName": "Ma video"
+}
+```
+
+Champs:
+
+- `videoId` (string) - ID YouTube 11 caracteres, ou URL YouTube complete via le champ `url`
+- `url` (string, alternative) - URL YouTube (`youtube.com/watch?v=`, `youtu.be/`, `youtube.com/shorts/`)
+- `fileName` (string, optionnel) - nom de fichier souhaite
+- `headers.cookie` (string, optionnel) - cookies pour les videos restreintes
+
+Reponse succes (`201`):
+
+```json
+{
+  "message": "Telechargement termine",
+  "fileName": "Ma video.mp4",
+  "filePath": "/downloads/Ma video.mp4"
+}
+```
+
+`POST /api/download/youtube/start`
+
+Meme body, mais asynchrone. Retourne un `jobId` pour le polling.
+
+Reponse (`202`):
+
+```json
+{
+  "message": "Job YouTube demarre",
+  "jobId": "uuid-du-job",
+  "status": "queued",
+  "fileName": "",
+  "filePath": ""
+}
+```
+
+`GET /api/download/youtube/status/:jobId`
+
+- Header requis: `x-api-key`
+- Reponse: statut du job + progression
+
+Reponse:
+
+```json
+{
+  "jobId": "uuid-du-job",
+  "status": "running",
+  "progress": 45,
+  "timemark": "ETA 01:23",
+  "message": "YouTube 45%",
+  "fileName": "",
+  "filePath": "",
+  "ffmpegMode": "yt-dlp",
+  "error": ""
+}
+```
+
 ## Interface de test
 
 - Ouvrir `http://localhost:3000`
@@ -264,8 +383,9 @@ Reponse succes:
 Le dossier `chrome-extension/` contient une extension MV3 qui:
 
 - detecte des URLs `.m3u8` (requetes reseau + scan de page)
-- pre-remplit l'URL detectee dans le popup
-- envoie l'URL a `POST /api/download` avec `x-api-key`
+- detecte les videos YouTube (youtube.com, youtu.be, shorts)
+- pre-remplit l'URL detectee ou le videoId YouTube dans le popup
+- envoie l'URL a `POST /api/download` ou `POST /api/download/youtube/start` avec `x-api-key`
 
 Installation:
 
@@ -274,7 +394,7 @@ Installation:
 3. Cliquer sur Charger l'extension non empaquetee
 4. Selectionner le dossier `chrome-extension/`
 
-Utilisation:
+### Utilisation - Flux HLS/MP4 classiques
 
 1. Demarrer le serveur local (`npm start`)
 2. Ouvrir une page qui charge un flux HLS
@@ -283,13 +403,48 @@ Utilisation:
 5. Saisir `API Key` (celle de `.env`)
 6. Cliquer `Detecter`, puis `Envoyer`
 
+### Utilisation - Videos YouTube
+
+1. Demarrer le serveur local (`npm start`)
+2. Ouvrir une video YouTube dans le navigateur
+3. Ouvrir le popup de l'extension
+4. La section "YouTube detecte" apparait avec le videoId
+5. Verifier `Endpoint API` et `API Key`
+6. Cliquer le bouton **YouTube** (rouge)
+7. Le telechargement se lance via yt-dlp sur le serveur
+8. La progression s'affiche dans le popup
+9. Une fois termine, le fichier MP4 se telecharge automatiquement via le navigateur
+
 Note CORS:
 
 - Le serveur autorise les origins `chrome-extension://*`, `localhost` et `127.0.0.1`.
+
+## Architecture des services
+
+```
+src/
+  services/
+    youtube-download.service.js   # Wrapper yt-dlp (child_process)
+    media-download.service.js     # Routeur HLS/MP4 direct
+    ffmpeg.service.js             # Pipeline FFmpeg avec fallback
+    direct-download.service.js    # Telechargement MP4 direct
+    download-job.service.js       # Queue et gestion des jobs
+    hls-quality.service.js        # Selection qualite M3U8
+    ...
+  controllers/
+    download.controller.js        # Endpoints HLS/MP4
+    youtube.controller.js         # Endpoints YouTube
+    admin.controller.js           # Endpoints admin
+  routes/
+    download.js                   # Routes /api/download/*
+    admin.js                      # Routes /api/admin/*
+```
 
 ## Notes
 
 - Les fichiers sont enregistres dans `downloads/`
 - Les donnees persistantes sont enregistrees dans `data/app.db` (SQLite)
 - Les noms de sortie sont nettoyes et securises pour eviter les injections via input utilisateur
+- YouTube: yt-dlp selectionne automatiquement la meilleure qualite MP4 disponible
+- YouTube: les cookies du navigateur sont transmis pour les videos avec restriction d'age
 - Conventions agent et architecture: voir `AGENTS.md` et `projet.md`

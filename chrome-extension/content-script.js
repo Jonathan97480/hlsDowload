@@ -4,6 +4,39 @@ const RESCAN_DELAYS_MS = [0, 1200, 3000, 6000];
 let observerStarted = false;
 let pageHookInjected = false;
 
+function isYouTubePage() {
+    return /^https?:\/\/(www\.)?youtube\.com\/watch\?/i.test(document.location.href) ||
+           /^https?:\/\/(www\.)?youtube\.com\/shorts\//i.test(document.location.href) ||
+           /^https?:\/\/youtu\.be\//i.test(document.location.href);
+}
+
+function extractYouTubeVideoId() {
+    const url = document.location.href;
+    let match = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+    match = url.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+    match = url.match(/youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+    return "";
+}
+
+function notifyYouTubeDetection() {
+    const videoId = extractYouTubeVideoId();
+    if (!videoId) return;
+
+    const title = document.querySelector("yt-formatted-string.ytd-watch-metadata h1, title, h1.ytd-watch-metadata");
+    const videoTitle = title ? title.textContent.trim() : document.title || "";
+
+    chrome.runtime.sendMessage({
+        type: "youtubeDetected",
+        videoId,
+        videoTitle,
+        url: document.location.href,
+        context: getPageContext("youtube")
+    }).catch(() => { });
+}
+
 function isSupportedMediaUrl(url) {
     return /^https?:\/\//i.test(url) && /\.(m3u8|mp4)(\?.*)?$/i.test(url);
 }
@@ -168,12 +201,25 @@ injectPageHook();
 scheduleRescans();
 startMutationObserver();
 
+if (isYouTubePage()) {
+    notifyYouTubeDetection();
+    setTimeout(notifyYouTubeDetection, 2000);
+    setTimeout(notifyYouTubeDetection, 5000);
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type !== "scanPage") {
+    if (message?.type === "scanPage") {
+        const found = pushCandidatesToBackground("manual-scan");
+        sendResponse({ ok: true, found, context: getPageContext("manual-scan") });
         return undefined;
     }
 
-    const found = pushCandidatesToBackground("manual-scan");
-    sendResponse({ ok: true, found, context: getPageContext("manual-scan") });
+    if (message?.type === "checkYouTube") {
+        const isYT = isYouTubePage();
+        const videoId = isYT ? extractYouTubeVideoId() : "";
+        sendResponse({ ok: true, isYouTube: isYT, videoId });
+        return undefined;
+    }
+
     return undefined;
 });
