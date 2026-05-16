@@ -2,8 +2,50 @@
     const EVENT_NAME = "media-url-sender:detected";
     const SOURCE_NAME = "media-url-sender";
 
+    function getMediaCandidateKind(url) {
+        if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+            return "";
+        }
+
+        try {
+            const parsed = new URL(url);
+            const pathname = parsed.pathname.toLowerCase();
+            const search = `${parsed.search}${parsed.hash}`.toLowerCase();
+            const combined = `${pathname}${search}`;
+
+            if (/\.m3u8(?:$|[?#])/i.test(url)) {
+                return "hls_exact";
+            }
+
+            if (/\.mp4(?:$|[?#])/i.test(url)) {
+                return "mp4_exact";
+            }
+
+            const blockedAssetExt = /\.(?:html?|css|js|json|txt|xml|jpg|jpeg|png|gif|svg|webp|ico|woff2?|ttf|map)$/i;
+            if (blockedAssetExt.test(pathname)) {
+                return "";
+            }
+
+            if (/(^|[/?=_-])(master|manifest|playlist|stream)([/?&=_-]|$)/.test(combined)) {
+                return "hls_hint";
+            }
+
+            if (/(^|[?&=_-])(format|type|output|mime)=([^#]*m3u8|[^#]*mpegurl|[^#]*mp4)/.test(search)) {
+                return /mp4/.test(search) ? "mp4_hint" : "hls_hint";
+            }
+
+            if (/(^|[?&=_-])(hls|m3u8|mp4)([=&/_-]|$)/.test(search)) {
+                return /mp4/.test(search) ? "mp4_hint" : "hls_hint";
+            }
+        } catch (_error) {
+            return "";
+        }
+
+        return "";
+    }
+
     function isSupportedMediaUrl(url) {
-        return /^https?:\/\//i.test(url) && /\.(m3u8|mp4)(\?.*)?$/i.test(url);
+        return !!getMediaCandidateKind(url);
     }
 
     function emit(url, channel, extras = {}) {

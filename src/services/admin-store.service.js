@@ -79,6 +79,32 @@ function getActiveApiKey() {
     return getStateValue("api_key", process.env.API_KEY || "");
 }
 
+function maskApiKey(apiKey) {
+    const value = String(apiKey || "");
+
+    if (!value) {
+        return "";
+    }
+
+    if (value.length <= 8) {
+        return `${value.slice(0, 2)}***${value.slice(-2)}`;
+    }
+
+    return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
+function getApiKeyStatus() {
+    const row = db.prepare("SELECT value_text, updated_at FROM app_state WHERE key = ?").get("api_key");
+    const apiKey = row?.value_text || process.env.API_KEY || "";
+
+    return {
+        hasApiKey: Boolean(apiKey),
+        maskedApiKey: maskApiKey(apiKey),
+        updatedAt: row?.updated_at || 0,
+        source: row?.value_text ? "database" : (process.env.API_KEY ? "env" : "")
+    };
+}
+
 function setActiveApiKey(apiKey) {
     setStateValue("api_key", String(apiKey || ""));
     return apiKey;
@@ -352,6 +378,7 @@ module.exports = {
     authenticateAdmin,
     clearSetupToken,
     createSession,
+    getApiKeyStatus,
     getActiveApiKey,
     getAdminProfile,
     getBootstrapInfo,

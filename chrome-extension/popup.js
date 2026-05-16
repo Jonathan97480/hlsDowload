@@ -447,48 +447,30 @@ async function detectFromBackground(tabId) {
 }
 
 async function detectFromPage(tabId) {
-    let response = null;
-
     try {
-        response = await chrome.tabs.sendMessage(tabId, { type: "scanPage" });
+        const response = await chrome.tabs.sendMessage(tabId, { type: "scanPage" });
+
+        if (response?.found?.length) {
+            mediaUrlInput.value = response.found[0];
+            showSection(mediaUrlSection);
+
+            if (response.context?.referer) {
+                refererInput.value = response.context.referer;
+            }
+            if (response.context?.userAgent) {
+                userAgentInput.value = response.context.userAgent;
+            }
+            if (response.context?.cookie) {
+                cookieInput.value = response.context.cookie;
+            }
+
+            return true;
+        }
+
+        return false;
     } catch (error) {
-        const message = String(error?.message || "");
-
-        if (!message.includes("Receiving end does not exist")) {
-            return false;
-        }
-
-        try {
-            await chrome.scripting.executeScript({
-                target: { tabId },
-                files: ["content-script.js"]
-            });
-
-            response = await chrome.tabs.sendMessage(tabId, { type: "scanPage" });
-        } catch (_injectError) {
-            return false;
-        }
+        return false;
     }
-
-    if (response?.found?.length) {
-        mediaUrlInput.value = response.found[0];
-        showSection(mediaUrlSection);
-
-        // Auto-fill referer from document context if available
-        if (response.context?.referer) {
-            refererInput.value = response.context.referer;
-        }
-        if (response.context?.userAgent) {
-            userAgentInput.value = response.context.userAgent;
-        }
-        if (response.context?.cookie) {
-            cookieInput.value = response.context.cookie;
-        }
-
-        return true;
-    }
-
-    return false;
 }
 
 async function autoDetect() {

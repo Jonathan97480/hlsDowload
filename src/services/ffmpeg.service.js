@@ -1,10 +1,11 @@
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
 const ffmpeg = require("fluent-ffmpeg");
 const { getBestHlsUrl } = require("./hls-quality.service");
 const { findMasterM3U8 } = require("./master-detector.service");
 const { ensureDownloadsDir, createSafeOutputName } = require("./file-output.service");
+const { createSegmentDownloadTask } = require("./hls-segment-pipeline.service");
+const { validateOutputFile, verifySegmentIntegrity } = require("./video-validation.service");
 
 if (process.env.FFMPEG_PATH) {
     ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
@@ -91,58 +92,6 @@ function runFfmpegConvert(finalUrl, inputOptions, outputPath, hooks, mode) {
     });
 }
 
-function validateWithFfprobe(filePath) {
-    return new Promise((resolve, reject) => {
-        ffmpeg.ffprobe(filePath, (error, metadata) => {
-            if (error) {
-                reject(new Error(`ffprobe indisponible: ${error.message}`));
-                return;
-            }
-
-            const streams = Array.isArray(metadata?.streams) ? metadata.streams : [];
-            const hasVideo = streams.some((stream) => stream.codec_type === "video");
-
-            if (!hasVideo) {
-                reject(new Error("Aucun flux video detecte dans le MP4"));
-                return;
-            }
-
-            resolve();
-        });
-    });
-}
-
-function validateDecodePass(filePath) {
-    return new Promise((resolve, reject) => {
-        const ffmpegBin = process.env.FFMPEG_PATH || "ffmpeg";
-        const args = ["-v", "error", "-i", filePath, "-t", "120", "-f", "null", "-"];
-        const child = spawn(ffmpegBin, args, { stdio: ["ignore", "ignore", "pipe"] });
-        let stderr = "";
-
-        child.stderr.on("data", (chunk) => {
-            stderr += chunk.toString();
-        });
-
-        child.on("error", (error) => {
-            reject(new Error(`Validation ffmpeg impossible: ${error.message}`));
-        });
-
-        child.on("close", (code) => {
-            if (code === 0 && !stderr.trim()) {
-                resolve();
-                return;
-            }
-
-            reject(new Error(`Decode check en echec: ${stderr.trim() || `exit ${code}`}`));
-        });
-    });
-}
-
-async function validateOutputFile(outputPath) {
-    await validateWithFfprobe(outputPath);
-    await validateDecodePass(outputPath);
-}
-
 function removeOutputIfExists(outputPath) {
     try {
         if (fs.existsSync(outputPath)) {
@@ -155,6 +104,16 @@ function removeOutputIfExists(outputPath) {
 
 function createCancelledError() {
     return new Error("Telechargement annule");
+}
+
+function createHttpHeaders(headers) {
+    const httpHeaders = {};
+
+    if (headers?.referer) httpHeaders.Referer = headers.referer;
+    if (headers?.userAgent) httpHeaders["User-Agent"] = headers.userAgent;
+    if (headers?.cookie) httpHeaders.Cookie = headers.cookie;
+
+    return httpHeaders;
 }
 
 function runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, mode) {
@@ -261,12 +220,7 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
     const outputPath = path.join(downloadsDir, outputFileName);
     const inputOptions = buildInputOptions(headers);
 
-    // Étape 1: Tenter de trouver le master M3U8
-    // Convertir headers du format FFmpeg vers format HTTP
-    const httpHeaders = {};
-    if (headers?.referer) httpHeaders["Referer"] = headers.referer;
-    if (headers?.userAgent) httpHeaders["User-Agent"] = headers.userAgent;
-    if (headers?.cookie) httpHeaders["Cookie"] = headers.cookie;
+    const httpHeaders = createHttpHeaders(headers);
 
     let currentTask = null;
     let cancelled = false;
@@ -302,33 +256,13 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
             }
             console.log(`[ffmpeg] Qualite: ${quality}`);
             console.log(`[ffmpeg] URL finale: ${finalUrl}`);
-            console.log("[ffmpeg] Demarrage FFmpeg en mode copy...");
 
-            currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "copy");
+            console.log("[ffmpeg] Tentative 1: pipeline segments HLS...");
+            currentTask = createSegmentDownloadTask(finalUrl, headers, outputPath, hooks);
             return currentTask.promise
-                .then(() => {
-                    if (cancelled) throw createCancelledError();
-                    return validateOutputFile(outputPath);
-                })
-                .catch((error) => {
-                    if (cancelled || error.message === "Telechargement annule") {
-                        throw createCancelledError();
-                    }
-                    console.log(`[ffmpeg] Copy invalide/instable: ${error.message}`);
-                    console.log("[ffmpeg] Relance en mode transcodage robuste...");
-                    removeOutputIfExists(outputPath);
-
-                    currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "transcode");
-                    return currentTask.promise
-                        .then(() => {
-                            if (cancelled) throw createCancelledError();
-                            return validateOutputFile(outputPath);
-                        })
-                        .then(() => ({ mode: "transcode" }));
-                })
-                .then((fallbackResult) => {
-                    const mode = fallbackResult?.mode || "copy";
-                    console.log(`[ffmpeg] FFmpeg terminee avec succes - qualite finale: ${quality} - mode: ${mode}`);
+                .then((segmentResult) => {
+                    const mode = segmentResult?.mode || "copy";
+                    console.log(`[ffmpeg] Conversion segments terminee - qualite finale: ${quality} - mode: ${mode}`);
 
                     return {
                         outputFileName,
@@ -336,6 +270,49 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
                         quality,
                         mode
                     };
+                })
+                .catch((segmentError) => {
+                    if (cancelled || segmentError.message === "Telechargement annule") {
+                        throw createCancelledError();
+                    }
+
+                    console.log(`[ffmpeg] Pipeline segments indisponible: ${segmentError.message}`);
+                    console.log("[ffmpeg] Tentative 2: pipeline FFmpeg classique...");
+                    removeOutputIfExists(outputPath);
+
+                    currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "copy");
+                    return currentTask.promise
+                        .then(() => {
+                            if (cancelled) throw createCancelledError();
+                            return validateOutputFile(outputPath);
+                        })
+                        .catch((error) => {
+                            if (cancelled || error.message === "Telechargement annule") {
+                                throw createCancelledError();
+                            }
+                            console.log(`[ffmpeg] Copy invalide/instable: ${error.message}`);
+                            console.log("[ffmpeg] Relance en mode transcodage robuste...");
+                            removeOutputIfExists(outputPath);
+
+                            currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "transcode");
+                            return currentTask.promise
+                                .then(() => {
+                                    if (cancelled) throw createCancelledError();
+                                    return validateOutputFile(outputPath);
+                                })
+                                .then(() => ({ mode: "transcode" }));
+                        })
+                        .then((fallbackResult) => {
+                            const mode = fallbackResult?.mode || "copy";
+                            console.log(`[ffmpeg] FFmpeg terminee avec succes - qualite finale: ${quality} - mode: ${mode}`);
+
+                            return {
+                                outputFileName,
+                                outputPath,
+                                quality,
+                                mode
+                            };
+                        });
                 });
         });
 
@@ -343,24 +320,6 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
         promise,
         cancel
     };
-}
-
-function verifySegmentIntegrity(segmentPath) {
-    return new Promise((resolve, reject) => {
-        const command = ffmpeg(segmentPath)
-            .ffprobe((err, data) => {
-                if (err) {
-                    reject(new Error(`Segment verification failed: ${err.message}`));
-                } else {
-                    // Example: Check duration or other metadata
-                    if (data.format && data.format.duration > 0) {
-                        resolve(true);
-                    } else {
-                        reject(new Error('Segment duration is invalid.'));
-                    }
-                }
-            });
-    });
 }
 
 module.exports = {

@@ -7,6 +7,8 @@ const { getDb } = require("./sqlite.service");
 const { ensureDiskSpaceForDownload } = require("./storage-guard.service");
 const { createDownloadTask, getDownloadSourceType } = require("./media-download.service");
 const { createYouTubeDownloadTask } = require("./youtube-download.service");
+const { downloadAndVerifySegment } = require("./segment-download.service");
+const { getSegmentStats } = require("./hls-segment-stats.service");
 
 const db = getDb();
 const jobs = new Map();
@@ -376,6 +378,7 @@ function buildDashboardSnapshot() {
     const systemMetrics = getSystemMetrics();
     const jobList = getJobsSnapshot();
     const historyList = getHistorySnapshot();
+    const segmentStats = getSegmentStats();
     const completedHistory = historyList.filter((job) => job.status === "completed");
     const activeCount = jobList.filter((job) => job.status === "queued" || job.status === "running").length;
     const busyStatus = activeCount > 0 ? "Busy" : "Idle";
@@ -416,6 +419,10 @@ function buildDashboardSnapshot() {
         bandwidthSeries: hourlyBandwidth,
         jobs: jobList,
         history: historyList,
+        totalSegments: segmentStats.totalSegments,
+        corruptedSegments: segmentStats.corruptedSegments,
+        retryAttempts: segmentStats.retryAttempts,
+        segmentStats,
         totals: {
             completed: completedHistory.length,
             failed: historyList.filter((job) => job.status === "failed").length

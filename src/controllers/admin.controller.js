@@ -4,6 +4,7 @@ const {
     clearSetupToken,
     createSession,
     getAdminProfile,
+    getApiKeyStatus,
     getBootstrapInfo,
     getSettings,
     getSession,
@@ -14,6 +15,7 @@ const {
     updateSettings,
     validateSetupToken
 } = require("../services/admin-store.service");
+const { getSegmentStats: readSegmentStats } = require("../services/hls-segment-stats.service");
 
 function readSessionToken(req) {
     return (req.headers.cookie || "").split("admin_session=")[1]?.split(";")[0] || "";
@@ -220,8 +222,12 @@ function apiKeyRotate(_req, res) {
     });
 }
 
+function apiKeyStatus(_req, res) {
+    return res.status(200).json(getApiKeyStatus());
+}
+
 function getSegmentStats(req, res) {
-    const stats = buildDashboardSnapshot(); // Assuming this function is extended to include segment stats
+    const stats = readSegmentStats();
     res.status(200).json({
         totalSegments: stats.totalSegments,
         corruptedSegments: stats.corruptedSegments,
@@ -231,6 +237,7 @@ function getSegmentStats(req, res) {
 
 module.exports = {
     apiKeyRotate,
+    apiKeyStatus,
     bootstrap,
     dashboard,
     dashboardStream,

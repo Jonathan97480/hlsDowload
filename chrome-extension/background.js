@@ -15,8 +15,52 @@ function normalizeUrl(url) {
     return typeof url === "string" ? url.trim() : "";
 }
 
+function getMediaCandidateKind(url) {
+    const normalized = normalizeUrl(url);
+
+    if (!/^https?:\/\//i.test(normalized)) {
+        return "";
+    }
+
+    try {
+        const parsed = new URL(normalized);
+        const pathname = parsed.pathname.toLowerCase();
+        const search = `${parsed.search}${parsed.hash}`.toLowerCase();
+        const combined = `${pathname}${search}`;
+
+        if (/\.m3u8(?:$|[?#])/i.test(normalized)) {
+            return "hls_exact";
+        }
+
+        if (/\.mp4(?:$|[?#])/i.test(normalized)) {
+            return "mp4_exact";
+        }
+
+        const blockedAssetExt = /\.(?:html?|css|js|json|txt|xml|jpg|jpeg|png|gif|svg|webp|ico|woff2?|ttf|map)$/i;
+        if (blockedAssetExt.test(pathname)) {
+            return "";
+        }
+
+        if (/(^|[/?=_-])(master|manifest|playlist|stream)([/?&=_-]|$)/.test(combined)) {
+            return "hls_hint";
+        }
+
+        if (/(^|[?&=_-])(format|type|output|mime)=([^#]*m3u8|[^#]*mpegurl|[^#]*mp4)/.test(search)) {
+            return /mp4/.test(search) ? "mp4_hint" : "hls_hint";
+        }
+
+        if (/(^|[?&=_-])(hls|m3u8|mp4)([=&/_-]|$)/.test(search)) {
+            return /mp4/.test(search) ? "mp4_hint" : "hls_hint";
+        }
+    } catch (_error) {
+        return "";
+    }
+
+    return "";
+}
+
 function isSupportedMediaUrl(url) {
-    return /^https?:\/\//i.test(url) && /\.(m3u8|mp4)(\?.*)?$/i.test(url);
+    return !!getMediaCandidateKind(url);
 }
 
 function normalizeEntry(entry) {
@@ -29,12 +73,19 @@ function normalizeEntry(entry) {
 
 function scoreCandidate(url) {
     try {
-        const lower = new URL(url).pathname.toLowerCase();
+        const parsed = new URL(url);
+        const lower = `${parsed.pathname}${parsed.search}`.toLowerCase();
+        const kind = getMediaCandidateKind(url);
         let score = 0;
+
+        if (kind === "hls_exact") score += 160;
+        if (kind === "mp4_exact") score += 120;
+        if (kind === "hls_hint") score += 70;
+        if (kind === "mp4_hint") score += 55;
         if (/master\.m3u8|manifest\.m3u8|playlist\.m3u8|main\.m3u8|stream\.m3u8/.test(lower)) score += 120;
         if (/index\.m3u8/.test(lower)) score += 80;
-        if (/\.mp4$/.test(lower)) score += 50;
-        if (/index-v\d+-a\d+|segment-\d+|variant[_-]\d+|quality[_-](360|480|720|1080)/.test(lower)) score -= 90;
+        if (/\.mp4(?:$|[?#])/.test(lower)) score += 50;
+        if (/index-v\d+-a\d+|segment-\d+|variant[_-]\d+|quality[_-](360|480|720|1080)|seg-\d+/.test(lower)) score -= 90;
         return score - (lower.length * 0.01);
     } catch (_error) {
         return -9999;

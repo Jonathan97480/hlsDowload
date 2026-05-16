@@ -14,6 +14,8 @@ const bandwidthCanvas = document.getElementById("bandwidthChart");
 const maxConcurrentDownloadsInput = document.getElementById("maxConcurrentDownloads");
 const maxTitleLengthInput = document.getElementById("maxTitleLength");
 const apiKeyReveal = document.getElementById("apiKeyReveal");
+const apiKeyStatusText = document.getElementById("apiKeyStatusText");
+const apiKeyUpdatedAt = document.getElementById("apiKeyUpdatedAt");
 const profileUsernameInput = document.getElementById("profileUsername");
 const profileEmailInput = document.getElementById("profileEmail");
 const profileCurrentPasswordInput = document.getElementById("profileCurrentPassword");
@@ -287,6 +289,31 @@ function renderDashboard(data) {
     renderJobs(data.jobs || []);
     renderHistory(data.history || []);
     syncAdminProfile(data.admin);
+
+    if (window.updateSegmentStats) {
+        window.updateSegmentStats(data.segmentStats || {
+            totalSegments: data.totalSegments,
+            corruptedSegments: data.corruptedSegments,
+            retryAttempts: data.retryAttempts
+        });
+    }
+}
+
+function renderApiKeyStatus(status) {
+    if (!apiKeyStatusText || !apiKeyUpdatedAt) {
+        return;
+    }
+
+    if (!status?.hasApiKey) {
+        apiKeyStatusText.textContent = "Aucune cle API active.";
+        apiKeyUpdatedAt.textContent = "Source: aucune";
+        return;
+    }
+
+    apiKeyStatusText.textContent = `Cle active: ${status.maskedApiKey} (${status.source || "inconnue"})`;
+    apiKeyUpdatedAt.textContent = status.updatedAt
+        ? `Derniere rotation: ${new Date(status.updatedAt).toLocaleString()}`
+        : "Derniere rotation: inconnue";
 }
 
 function stopDashboardAutoRefresh() {
@@ -420,6 +447,11 @@ async function loadDashboard() {
     settingsForm.dataset.loaded = "true";
 }
 
+async function loadApiKeyStatus() {
+    const status = await fetchJson("/api/admin/api-key/status");
+    renderApiKeyStatus(status);
+}
+
 loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -450,6 +482,7 @@ loginForm.addEventListener("submit", async (event) => {
         showSetupForm(false);
         showDashboard(true);
         await loadDashboard();
+        await loadApiKeyStatus();
         startDashboardStream();
     } catch (error) {
         setMessage(error.message, "error");
@@ -488,6 +521,7 @@ setupForm.addEventListener("submit", async (event) => {
         showSetupForm(false);
         showDashboard(true);
         await loadDashboard();
+        await loadApiKeyStatus();
         startDashboardStream();
     } catch (error) {
         setSetupMessage(error.message, "error");
@@ -582,6 +616,7 @@ rotateApiKeyBtn.addEventListener("click", async () => {
 
         apiKeyReveal.textContent = `Nouvelle cle API: ${result.apiKey}`;
         apiKeyReveal.classList.remove("hidden");
+        await loadApiKeyStatus();
         setMessage("Nouvelle cle API generee et affichee une seule fois.", "success");
     } catch (error) {
         setMessage(error.message, "error");
@@ -608,6 +643,7 @@ async function init() {
         const session = await loadSession();
         if (session) {
             await loadDashboard();
+            await loadApiKeyStatus();
             startDashboardStream();
         } else {
             stopDashboardAutoRefresh();

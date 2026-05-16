@@ -101,21 +101,24 @@ function createGaugeChart(canvas, currentValue, maxValue) {
     return gaugeChartInstance;
 }
 
-async function fetchSegmentStats() {
-    try {
-        const response = await fetch('/api/admin/segments');
-        const data = await response.json();
+function updateSegmentStats(stats = {}) {
+    const totalSegmentsEl = document.getElementById("totalSegments");
+    const corruptedSegmentsEl = document.getElementById("corruptedSegments");
+    const retryAttemptsEl = document.getElementById("retryAttempts");
 
-        document.getElementById('totalSegments').textContent = data.totalSegments;
-        document.getElementById('corruptedSegments').textContent = data.corruptedSegments;
-        document.getElementById('retryAttempts').textContent = data.retryAttempts;
-    } catch (error) {
-        console.error('Failed to fetch segment stats:', error);
+    if (totalSegmentsEl) {
+        totalSegmentsEl.textContent = Number.isFinite(stats.totalSegments) ? stats.totalSegments : 0;
+    }
+
+    if (corruptedSegmentsEl) {
+        corruptedSegmentsEl.textContent = Number.isFinite(stats.corruptedSegments) ? stats.corruptedSegments : 0;
+    }
+
+    if (retryAttemptsEl) {
+        retryAttemptsEl.textContent = Number.isFinite(stats.retryAttempts) ? stats.retryAttempts : 0;
     }
 }
 
 window.createBandwidthChart = createBandwidthChart;
 window.createGaugeChart = createGaugeChart;
-
-// Call this function periodically or on page load
-fetchSegmentStats();
+window.updateSegmentStats = updateSegmentStats;

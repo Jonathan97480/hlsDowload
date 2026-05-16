@@ -1,8 +1,14 @@
-const PAGE_HOOK_EVENT = "media-url-sender:detected";
-const PAGE_HOOK_SOURCE = "media-url-sender";
-const RESCAN_DELAYS_MS = [0, 1200, 3000, 6000];
-let observerStarted = false;
-let pageHookInjected = false;
+(() => {
+if (globalThis.__mediaUrlSenderContentScriptLoaded) {
+    return;
+}
+globalThis.__mediaUrlSenderContentScriptLoaded = true;
+
+    const PAGE_HOOK_EVENT = "media-url-sender:detected";
+    const PAGE_HOOK_SOURCE = "media-url-sender";
+    const RESCAN_DELAYS_MS = [0, 1200, 3000, 6000];
+    let observerStarted = false;
+    let pageHookInjected = false;
 
 function isYouTubePage() {
     return /^https?:\/\/(www\.)?youtube\.com\/watch\?/i.test(document.location.href) ||
@@ -37,8 +43,50 @@ function notifyYouTubeDetection() {
     }).catch(() => { });
 }
 
+function getMediaCandidateKind(url) {
+    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+        return "";
+    }
+
+    try {
+        const parsed = new URL(url);
+        const pathname = parsed.pathname.toLowerCase();
+        const search = `${parsed.search}${parsed.hash}`.toLowerCase();
+        const combined = `${pathname}${search}`;
+
+        if (/\.m3u8(?:$|[?#])/i.test(url)) {
+            return "hls_exact";
+        }
+
+        if (/\.mp4(?:$|[?#])/i.test(url)) {
+            return "mp4_exact";
+        }
+
+        const blockedAssetExt = /\.(?:html?|css|js|json|txt|xml|jpg|jpeg|png|gif|svg|webp|ico|woff2?|ttf|map)$/i;
+        if (blockedAssetExt.test(pathname)) {
+            return "";
+        }
+
+        if (/(^|[/?=_-])(master|manifest|playlist|stream)([/?&=_-]|$)/.test(combined)) {
+            return "hls_hint";
+        }
+
+        if (/(^|[?&=_-])(format|type|output|mime)=([^#]*m3u8|[^#]*mpegurl|[^#]*mp4)/.test(search)) {
+            return /mp4/.test(search) ? "mp4_hint" : "hls_hint";
+        }
+
+        if (/(^|[?&=_-])(hls|m3u8|mp4)([=&/_-]|$)/.test(search)) {
+            return /mp4/.test(search) ? "mp4_hint" : "hls_hint";
+        }
+    } catch (_error) {
+        return "";
+    }
+
+    return "";
+}
+
 function isSupportedMediaUrl(url) {
-    return /^https?:\/\//i.test(url) && /\.(m3u8|mp4)(\?.*)?$/i.test(url);
+    return !!getMediaCandidateKind(url);
 }
 
 function toAbsoluteMediaUrl(raw) {
@@ -60,6 +108,11 @@ function toAbsoluteMediaUrl(raw) {
 }
 
 function isMasterLikeUrl(url) {
+    const kind = getMediaCandidateKind(url);
+    if (kind === "hls_hint") {
+        return true;
+    }
+
     let urlPath = "";
     try {
         urlPath = new URL(url, document.location.href).pathname.toLowerCase();
@@ -67,7 +120,7 @@ function isMasterLikeUrl(url) {
         return false;
     }
 
-    return !/index-v\d+-a\d+|segment-\d+|variant[_-]\d+|quality[_-](360|480|720|1080)/i.test(urlPath);
+    return !/index-v\d+-a\d+|segment-\d+|variant[_-]\d+|quality[_-](360|480|720|1080)|seg-\d+/i.test(urlPath);
 }
 
 function getPageContext(source = "dom") {
@@ -185,41 +238,42 @@ function injectPageHook() {
     pageHookInjected = true;
 }
 
-window.addEventListener(PAGE_HOOK_EVENT, (event) => {
-    const detail = event.detail || {};
-    if (detail.source !== PAGE_HOOK_SOURCE) {
-        return;
-    }
+    window.addEventListener(PAGE_HOOK_EVENT, (event) => {
+        const detail = event.detail || {};
+        if (detail.source !== PAGE_HOOK_SOURCE) {
+            return;
+        }
 
-    pushUrl(detail.url, detail.channel || "page-hook", {
-        method: detail.method || "",
-        initiator: detail.initiator || document.location.href
+        pushUrl(detail.url, detail.channel || "page-hook", {
+            method: detail.method || "",
+            initiator: detail.initiator || document.location.href
+        });
     });
-});
 
-injectPageHook();
-scheduleRescans();
-startMutationObserver();
+    injectPageHook();
+    scheduleRescans();
+    startMutationObserver();
 
-if (isYouTubePage()) {
-    notifyYouTubeDetection();
-    setTimeout(notifyYouTubeDetection, 2000);
-    setTimeout(notifyYouTubeDetection, 5000);
-}
-
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "scanPage") {
-        const found = pushCandidatesToBackground("manual-scan");
-        sendResponse({ ok: true, found, context: getPageContext("manual-scan") });
-        return undefined;
+    if (isYouTubePage()) {
+        notifyYouTubeDetection();
+        setTimeout(notifyYouTubeDetection, 2000);
+        setTimeout(notifyYouTubeDetection, 5000);
     }
 
-    if (message?.type === "checkYouTube") {
-        const isYT = isYouTubePage();
-        const videoId = isYT ? extractYouTubeVideoId() : "";
-        sendResponse({ ok: true, isYouTube: isYT, videoId });
-        return undefined;
-    }
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        if (message?.type === "scanPage") {
+            const found = pushCandidatesToBackground("manual-scan");
+            sendResponse({ ok: true, found, context: getPageContext("manual-scan") });
+            return undefined;
+        }
 
-    return undefined;
-});
+        if (message?.type === "checkYouTube") {
+            const isYT = isYouTubePage();
+            const videoId = isYT ? extractYouTubeVideoId() : "";
+            sendResponse({ ok: true, isYouTube: isYT, videoId });
+            return undefined;
+        }
+
+        return undefined;
+    });
+})();

@@ -1,8 +1,47 @@
 const { createHlsDownloadTask, downloadHlsToMp4 } = require("./ffmpeg.service");
 const { createDirectDownloadTask, downloadDirectMp4 } = require("./direct-download.service");
+const { downloadAndVerifySegment } = require("./segment-download.service");
 
 function normalizeUrl(url) {
     return typeof url === "string" ? url.trim() : "";
+}
+
+function getHeuristicSourceType(normalizedUrl) {
+    try {
+        const parsed = new URL(normalizedUrl);
+        const pathname = parsed.pathname.toLowerCase();
+        const search = `${parsed.search}${parsed.hash}`.toLowerCase();
+        const combined = `${pathname}${search}`;
+
+        const blockedAssetExt = /\.(?:html?|css|js|json|txt|xml|jpg|jpeg|png|gif|svg|webp|ico|woff2?|ttf|map)$/i;
+        if (blockedAssetExt.test(pathname)) {
+            return "";
+        }
+
+        if (/(^|[/?=_-])(master|manifest|playlist|stream)([/?&=_-]|$)/.test(combined)) {
+            return "hls";
+        }
+
+        if (/(^|[?&=_-])(format|type|output|mime)=([^#]*m3u8|[^#]*mpegurl)/.test(search)) {
+            return "hls";
+        }
+
+        if (/(^|[?&=_-])(format|type|output|mime)=([^#]*mp4)/.test(search)) {
+            return "direct";
+        }
+
+        if (/(^|[?&=_-])(hls|m3u8)([=&/_-]|$)/.test(search)) {
+            return "hls";
+        }
+
+        if (/(^|[?&=_-])mp4([=&/_-]|$)/.test(search)) {
+            return "direct";
+        }
+    } catch (_error) {
+        return "";
+    }
+
+    return "";
 }
 
 function getDownloadSourceType(url) {
@@ -20,7 +59,7 @@ function getDownloadSourceType(url) {
         return "direct";
     }
 
-    return "";
+    return getHeuristicSourceType(normalized);
 }
 
 function isSupportedDownloadUrl(url) {
@@ -28,7 +67,7 @@ function isSupportedDownloadUrl(url) {
 }
 
 function getExpectedUrlHint() {
-    return "URL invalide: attendu http(s)://...m3u8 ou http(s)://...mp4";
+    return "URL invalide: attendu une URL http(s) de flux HLS/MP4 detectee";
 }
 
 function downloadMediaToMp4(url, headers = {}, hooks = {}, options = {}) {
@@ -50,25 +89,6 @@ function createDownloadTask(url, headers = {}, hooks = {}, options = {}) {
         promise: Promise.reject(new Error(getExpectedUrlHint())),
         cancel: () => false
     };
-}
-
-async function downloadAndVerifySegment(url, headers, outputPath) {
-    let attempts = 0;
-    const maxRetries = 3;
-
-    while (attempts < maxRetries) {
-        try {
-            await downloadSegment(url, headers, outputPath); // Assume downloadSegment exists
-            await verifySegmentIntegrity(outputPath); // Call the new verification function
-            return true; // Success
-        } catch (error) {
-            attempts++;
-            console.error(`Retry ${attempts}/${maxRetries} for segment ${url}: ${error.message}`);
-            if (attempts >= maxRetries) {
-                throw new Error(`Failed to download and verify segment after ${maxRetries} attempts.`);
-            }
-        }
-    }
 }
 
 module.exports = {

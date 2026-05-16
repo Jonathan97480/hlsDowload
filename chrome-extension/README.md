@@ -22,5 +22,5 @@ Extension Chrome Manifest V3 pour detecter des URLs `.m3u8` ou `.mp4` et les env
 
 - `manifest.json`: configuration extension MV3
 - `background.js`: capture des requetes reseau et stockage des URLs `.m3u8` ou `.mp4`
-- `content-script.js`: scan du DOM/page pour URLs `.m3u8` ou `.mp4`
+- `content-script-main.js`: scan du DOM/page pour URLs media detectables
 - `popup.html|css|js`: interface et appel vers le serveur
