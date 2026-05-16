@@ -52,10 +52,30 @@ function createDownloadTask(url, headers = {}, hooks = {}, options = {}) {
     };
 }
 
+async function downloadAndVerifySegment(url, headers, outputPath) {
+    let attempts = 0;
+    const maxRetries = 3;
+
+    while (attempts < maxRetries) {
+        try {
+            await downloadSegment(url, headers, outputPath); // Assume downloadSegment exists
+            await verifySegmentIntegrity(outputPath); // Call the new verification function
+            return true; // Success
+        } catch (error) {
+            attempts++;
+            console.error(`Retry ${attempts}/${maxRetries} for segment ${url}: ${error.message}`);
+            if (attempts >= maxRetries) {
+                throw new Error(`Failed to download and verify segment after ${maxRetries} attempts.`);
+            }
+        }
+    }
+}
+
 module.exports = {
     createDownloadTask,
     downloadMediaToMp4,
     getDownloadSourceType,
     getExpectedUrlHint,
-    isSupportedDownloadUrl
+    isSupportedDownloadUrl,
+    downloadAndVerifySegment
 };

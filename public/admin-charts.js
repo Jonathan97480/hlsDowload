@@ -101,5 +101,21 @@ function createGaugeChart(canvas, currentValue, maxValue) {
     return gaugeChartInstance;
 }
 
+async function fetchSegmentStats() {
+    try {
+        const response = await fetch('/api/admin/segments');
+        const data = await response.json();
+
+        document.getElementById('totalSegments').textContent = data.totalSegments;
+        document.getElementById('corruptedSegments').textContent = data.corruptedSegments;
+        document.getElementById('retryAttempts').textContent = data.retryAttempts;
+    } catch (error) {
+        console.error('Failed to fetch segment stats:', error);
+    }
+}
+
 window.createBandwidthChart = createBandwidthChart;
 window.createGaugeChart = createGaugeChart;
+
+// Call this function periodically or on page load
+fetchSegmentStats();

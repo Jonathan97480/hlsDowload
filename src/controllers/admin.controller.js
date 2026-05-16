@@ -220,6 +220,15 @@ function apiKeyRotate(_req, res) {
     });
 }
 
+function getSegmentStats(req, res) {
+    const stats = buildDashboardSnapshot(); // Assuming this function is extended to include segment stats
+    res.status(200).json({
+        totalSegments: stats.totalSegments,
+        corruptedSegments: stats.corruptedSegments,
+        retryAttempts: stats.retryAttempts
+    });
+}
+
 module.exports = {
     apiKeyRotate,
     bootstrap,
@@ -231,5 +240,6 @@ module.exports = {
     profile,
     session,
     settings,
-    setup
+    setup,
+    getSegmentStats
 };

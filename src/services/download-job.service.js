@@ -490,29 +490,29 @@ function runQueuedMediaDownload(job, startedAt, settings, sourceType) {
     });
 
     const promise = task.promise.then((result) => {
-            const completedAt = Date.now();
-            const durationMs = startedAt ? completedAt - startedAt : 0;
-            let fileSizeBytes = 0;
+        const completedAt = Date.now();
+        const durationMs = startedAt ? completedAt - startedAt : 0;
+        let fileSizeBytes = 0;
 
-            try {
-                const outputStat = fs.statSync(result.outputPath);
-                fileSizeBytes = outputStat.size;
-            } catch (_error) {
-                fileSizeBytes = 0;
-            }
+        try {
+            const outputStat = fs.statSync(result.outputPath);
+            fileSizeBytes = outputStat.size;
+        } catch (_error) {
+            fileSizeBytes = 0;
+        }
 
-            finalizeJob(job.jobId, {
-                status: "completed",
-                progress: 100,
-                completedAt,
-                durationMs,
-                fileSizeBytes,
-                message: `Telechargement termine (${result.quality || "default"})`,
-                fileName: result.outputFileName,
-                filePath: `/downloads/${result.outputFileName}`,
-                ffmpegMode: result.mode || (sourceType === "direct" ? "direct" : "copy")
-            });
-        })
+        finalizeJob(job.jobId, {
+            status: "completed",
+            progress: 100,
+            completedAt,
+            durationMs,
+            fileSizeBytes,
+            message: `Telechargement termine (${result.quality || "default"})`,
+            fileName: result.outputFileName,
+            filePath: `/downloads/${result.outputFileName}`,
+            ffmpegMode: result.mode || (sourceType === "direct" ? "direct" : "copy")
+        });
+    })
         .catch((error) => {
             if (error && error.message === "Telechargement annule") {
                 finalizeJob(job.jobId, {
@@ -563,29 +563,29 @@ function runQueuedYouTubeDownload(job, startedAt) {
     });
 
     const promise = task.promise.then((result) => {
-            const completedAt = Date.now();
-            const durationMs = startedAt ? completedAt - startedAt : 0;
-            let fileSizeBytes = 0;
+        const completedAt = Date.now();
+        const durationMs = startedAt ? completedAt - startedAt : 0;
+        let fileSizeBytes = 0;
 
-            try {
-                const outputStat = fs.statSync(result.outputPath);
-                fileSizeBytes = outputStat.size;
-            } catch (_error) {
-                fileSizeBytes = 0;
-            }
+        try {
+            const outputStat = fs.statSync(result.outputPath);
+            fileSizeBytes = outputStat.size;
+        } catch (_error) {
+            fileSizeBytes = 0;
+        }
 
-            finalizeJob(job.jobId, {
-                status: "completed",
-                progress: 100,
-                completedAt,
-                durationMs,
-                fileSizeBytes,
-                message: "Telechargement YouTube termine",
-                fileName: result.outputFileName,
-                filePath: result.filePath,
-                ffmpegMode: "yt-dlp"
-            });
-        })
+        finalizeJob(job.jobId, {
+            status: "completed",
+            progress: 100,
+            completedAt,
+            durationMs,
+            fileSizeBytes,
+            message: "Telechargement YouTube termine",
+            fileName: result.outputFileName,
+            filePath: result.filePath,
+            ffmpegMode: "yt-dlp"
+        });
+    })
         .catch((error) => {
             if (error && error.message === "Telechargement annule") {
                 finalizeJob(job.jobId, {
@@ -730,6 +730,23 @@ function restorePendingJobsFromDatabase() {
     return rows.length;
 }
 
+async function processHlsSegments(segmentUrls, headers, outputDir) {
+    const segmentPaths = [];
+
+    for (const [index, segmentUrl] of segmentUrls.entries()) {
+        const segmentPath = path.join(outputDir, `segment_${index}.ts`);
+        try {
+            await downloadAndVerifySegment(segmentUrl, headers, segmentPath);
+            segmentPaths.push(segmentPath);
+        } catch (error) {
+            console.error(`Segment ${index} failed: ${error.message}`);
+            throw error; // Stop processing on failure
+        }
+    }
+
+    return segmentPaths;
+}
+
 module.exports = {
     buildDashboardSnapshot,
     cancelJob,
@@ -740,5 +757,6 @@ module.exports = {
     getJob,
     getJobsSnapshot,
     findCompletedDownload,
-    restorePendingJobsFromDatabase
+    restorePendingJobsFromDatabase,
+    processHlsSegments
 };

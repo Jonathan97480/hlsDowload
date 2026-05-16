@@ -345,7 +345,26 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
     };
 }
 
+function verifySegmentIntegrity(segmentPath) {
+    return new Promise((resolve, reject) => {
+        const command = ffmpeg(segmentPath)
+            .ffprobe((err, data) => {
+                if (err) {
+                    reject(new Error(`Segment verification failed: ${err.message}`));
+                } else {
+                    // Example: Check duration or other metadata
+                    if (data.format && data.format.duration > 0) {
+                        resolve(true);
+                    } else {
+                        reject(new Error('Segment duration is invalid.'));
+                    }
+                }
+            });
+    });
+}
+
 module.exports = {
     createHlsDownloadTask,
-    downloadHlsToMp4
+    downloadHlsToMp4,
+    verifySegmentIntegrity
 };
