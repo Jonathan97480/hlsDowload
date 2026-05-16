@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      YT_DLP_PATH: /usr/local/bin/yt-dlp
     ports:
       - "3301:3000"
     volumes:
