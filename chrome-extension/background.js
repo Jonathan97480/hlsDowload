@@ -11,6 +11,13 @@ let publicIpCache = {
 
 let managerLock = Promise.resolve();
 
+function getHeaderValue(requestHeaders, headerName) {
+    const match = (Array.isArray(requestHeaders) ? requestHeaders : []).find((header) =>
+        String(header?.name || "").toLowerCase() === String(headerName || "").toLowerCase()
+    );
+    return typeof match?.value === "string" ? match.value.trim() : "";
+}
+
 function normalizeUrl(url) {
     return typeof url === "string" ? url.trim() : "";
 }
@@ -71,8 +78,19 @@ function normalizeEntry(entry) {
     return null;
 }
 
-function scoreCandidate(url) {
+function isNetworkContext(context = {}) {
+    const source = String(context?.source || "").trim().toLowerCase();
+    return source === "network-request" ||
+        source === "network-headers" ||
+        source === "fetch" ||
+        source === "xhr" ||
+        source === "page-hook";
+}
+
+function scoreCandidate(entry) {
     try {
+        const url = typeof entry === "string" ? entry : entry?.url;
+        const context = typeof entry === "object" && entry ? (entry.context || {}) : {};
         const parsed = new URL(url);
         const lower = `${parsed.pathname}${parsed.search}`.toLowerCase();
         const kind = getMediaCandidateKind(url);
@@ -86,25 +104,143 @@ function scoreCandidate(url) {
         if (/index\.m3u8/.test(lower)) score += 80;
         if (/\.mp4(?:$|[?#])/.test(lower)) score += 50;
         if (/index-v\d+-a\d+|segment-\d+|variant[_-]\d+|quality[_-](360|480|720|1080)|seg-\d+/.test(lower)) score -= 90;
+        if (isNetworkContext(context)) score += 500;
         return score - (lower.length * 0.01);
     } catch (_error) {
         return -9999;
     }
 }
 
-function getBestEntry(urls) {
+function getBestEntry(urls, options = {}) {
+    const networkOnly = options.networkOnly === true;
     let best = null;
     let bestScore = -Infinity;
     (Array.isArray(urls) ? urls : []).forEach((item) => {
         const normalized = normalizeEntry(item);
         if (!normalized || !isSupportedMediaUrl(normalized.url)) return;
-        const score = scoreCandidate(normalized.url);
+        if (networkOnly && !isNetworkContext(normalized.context)) return;
+        const score = scoreCandidate(normalized);
         if (score > bestScore) {
             bestScore = score;
             best = normalized;
         }
     });
     return best;
+}
+
+function getExactEntryForTab(tabId, targetUrl) {
+    const normalizedTarget = normalizeUrl(targetUrl);
+    const urls = tabStreams.get(Number(tabId)) || [];
+    return urls
+        .map((item) => normalizeEntry(item))
+        .find((item) => item && normalizeUrl(item.url) === normalizedTarget) || null;
+}
+
+function getBestNetworkEntryForTab(tabId) {
+    const urls = tabStreams.get(Number(tabId)) || [];
+    return getBestEntry(urls, { networkOnly: true });
+}
+
+function deriveOriginFromContext(context = {}) {
+    const candidates = [context.origin, context.documentUrl, context.referer];
+    for (const value of candidates) {
+        try {
+            if (!value) continue;
+            return new URL(value).origin;
+        } catch (_error) { }
+    }
+    return "";
+}
+
+function countCookiePairs(cookieValue) {
+    const raw = String(cookieValue || "").trim();
+    if (!raw) {
+        return 0;
+    }
+
+    return raw.split(";").map((part) => part.trim()).filter(Boolean).length;
+}
+
+async function fetchCookieDebugForMediaAndPage(mediaUrl, pageUrl) {
+    const safeMediaUrl = typeof mediaUrl === "string" && mediaUrl.startsWith("http") ? mediaUrl : "";
+    const safePageUrl = typeof pageUrl === "string" && pageUrl.startsWith("http") ? pageUrl : "";
+    let mediaCookie = "";
+    let pageCookie = "";
+
+    if (safeMediaUrl) {
+        try {
+            mediaCookie = await fetchCookiesForUrl(safeMediaUrl);
+        } catch (_error) { }
+    }
+
+    if (safePageUrl) {
+        try {
+            pageCookie = await fetchCookiesForUrl(safePageUrl);
+        } catch (_error) { }
+    }
+
+    return {
+        mediaCookie,
+        mediaCookieCount: countCookiePairs(mediaCookie),
+        pageCookie,
+        pageCookieCount: countCookiePairs(pageCookie)
+    };
+}
+
+async function enrichDirectMediaItem(item = {}) {
+    const body = item.body && typeof item.body === "object" ? { ...item.body } : {};
+    const tabId = Number.isInteger(item.tabId) ? item.tabId : -1;
+    const requestedUrl = normalizeUrl(body.url);
+    const exactEntry = tabId >= 0 ? getExactEntryForTab(tabId, requestedUrl) : null;
+    const networkFallbackEntry = !exactEntry && tabId >= 0 ? getBestNetworkEntryForTab(tabId) : null;
+    const selectedEntry = exactEntry || networkFallbackEntry;
+    const effectiveUrl = normalizeUrl(selectedEntry?.url || requestedUrl);
+    const entryContext = selectedEntry?.context || {};
+    const detectedContext = item.detectedContext && typeof item.detectedContext === "object" ? item.detectedContext : {};
+    const mergedContext = {
+        ...detectedContext,
+        ...entryContext
+    };
+    const referer = String(body.headers?.referer || mergedContext.referer || "").trim();
+    const userAgent = String(body.headers?.userAgent || mergedContext.userAgent || "").trim();
+    const documentUrl = String(mergedContext.documentUrl || referer || "").trim();
+    const cookieDebug = await fetchCookieDebugForMediaAndPage(effectiveUrl, documentUrl);
+    const cookie = String(
+        body.headers?.cookie ||
+        mergedContext.cookie ||
+        cookieDebug.mediaCookie ||
+        cookieDebug.pageCookie
+    ).trim();
+    const origin = String(body.headers?.origin || mergedContext.origin || deriveOriginFromContext(mergedContext)).trim();
+
+    return {
+        ...item,
+        body: {
+            ...body,
+            url: effectiveUrl,
+            headers: {
+                ...(body.headers || {}),
+                referer,
+                userAgent,
+                cookie,
+                origin
+            },
+            debug: {
+                exactEntryFound: Boolean(exactEntry),
+                networkFallbackUsed: Boolean(!exactEntry && networkFallbackEntry),
+                detectedContextKeys: Object.keys(detectedContext),
+                mergedContextKeys: Object.keys(mergedContext),
+                mediaCookieCount: cookieDebug.mediaCookieCount,
+                pageCookieCount: cookieDebug.pageCookieCount,
+                finalCookieCount: countCookiePairs(cookie),
+                originDerived: origin,
+                documentUrl,
+                requestedUrl,
+                effectiveUrl,
+                selectedSource: String(selectedEntry?.context?.source || "")
+            }
+        }
+    };
 }
 
 function defaultManagerState() {
@@ -486,23 +622,26 @@ function fetchCookiesForUrl(url) {
 }
 
 async function fetchCookiesForMediaAndPage(mediaUrl, pageUrl) {
-    const sources = [mediaUrl, pageUrl].filter((u) => typeof u === "string" && u.startsWith("http"));
-    const allCookies = new Map();
+    // Keep cookies scoped to the media host first. Mixing unrelated domains can trigger 403.
+    const safeMediaUrl = typeof mediaUrl === "string" && mediaUrl.startsWith("http") ? mediaUrl : "";
+    const safePageUrl = typeof pageUrl === "string" && pageUrl.startsWith("http") ? pageUrl : "";
 
-    for (const url of sources) {
+    if (safeMediaUrl) {
         try {
-            const raw = await fetchCookiesForUrl(url);
-            if (!raw) continue;
-            raw.split("; ").forEach((pair) => {
-                const eq = pair.indexOf("=");
-                if (eq > 0) {
-                    allCookies.set(pair.slice(0, eq), pair);
-                }
-            });
+            const mediaCookies = await fetchCookiesForUrl(safeMediaUrl);
+            if (mediaCookies) {
+                return mediaCookies;
+            }
         } catch (_error) { /* skip */ }
     }
 
-    return allCookies.size > 0 ? Array.from(allCookies.values()).join("; ") : "";
+    if (safePageUrl) {
+        try {
+            return await fetchCookiesForUrl(safePageUrl);
+        } catch (_error) { /* skip */ }
+    }
+
+    return "";
 }
 
 function rememberUrl(tabId, url, context = {}) {
@@ -510,16 +649,24 @@ function rememberUrl(tabId, url, context = {}) {
     if (!isSupportedMediaUrl(safeUrl) || tabId < 0) return;
 
     const urls = tabStreams.get(tabId) || [];
-    const exists = urls.some((item) => normalizeEntry(item)?.url === safeUrl);
-    if (exists) return;
+    const existingEntry = urls.find((item) => normalizeEntry(item)?.url === safeUrl);
+    const entry = existingEntry || { url: safeUrl, context: {} };
+    entry.context = {
+        ...(entry.context || {}),
+        ...(context || {})
+    };
 
-    const entry = { url: safeUrl, context: context || {} };
-    urls.unshift(entry);
+    if (!existingEntry) {
+        urls.unshift(entry);
+    }
+
     tabStreams.set(tabId, urls.slice(0, 20));
 
     const pageUrl = context.referer || context.documentUrl || "";
     fetchCookiesForMediaAndPage(safeUrl, pageUrl).then((cookieStr) => {
-        entry.context.cookie = cookieStr;
+        if (cookieStr || !entry.context.cookie) {
+            entry.context.cookie = cookieStr;
+        }
 
         const out = {};
         for (const [id, values] of tabStreams.entries()) {
@@ -543,8 +690,31 @@ async function hydrateFromStorage() {
 }
 
 chrome.webRequest.onBeforeRequest.addListener(
-    (details) => rememberUrl(details.tabId, details.url, { referer: details.initiator || details.url }),
+    (details) => rememberUrl(details.tabId, details.url, {
+        referer: details.initiator || details.url,
+        documentUrl: details.documentUrl || "",
+        source: "network-request"
+    }),
     { urls: ["<all_urls>"] }
+);
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+    (details) => {
+        if (!isSupportedMediaUrl(details.url)) {
+            return;
+        }
+
+        rememberUrl(details.tabId, details.url, {
+            referer: getHeaderValue(details.requestHeaders, "referer") || details.initiator || details.url,
+            origin: getHeaderValue(details.requestHeaders, "origin"),
+            userAgent: getHeaderValue(details.requestHeaders, "user-agent"),
+            cookie: getHeaderValue(details.requestHeaders, "cookie"),
+            documentUrl: details.documentUrl || "",
+            source: "network-headers"
+        });
+    },
+    { urls: ["<all_urls>"] },
+    ["requestHeaders", "extraHeaders"]
 );
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -754,39 +924,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "getLatestUrl") {
         const tabId = Number(message.tabId);
         const urls = tabStreams.get(tabId) || [];
-        const best = getBestEntry(urls);
+        const best = getBestEntry(urls, { networkOnly: true }) || getBestEntry(urls);
         const all = urls.map((item) => normalizeEntry(item)).filter((item) => item && item.url);
         sendResponse({ ok: true, latest: best || all[0] || "", all });
         return;
     }
 
     if (message?.type === "addToQueue") {
-        const item = message.item || {};
-        const serverUrl = String(item.serverUrl || "").trim();
-        const apiKey = String(item.apiKey || "").trim();
-        const body = item.body || {};
+        const rawItem = message.item || {};
 
-        if (!serverUrl || !apiKey || !body?.url) {
-            sendResponse({ ok: false, error: "Parametres manquants" });
-            return;
-        }
+        enrichDirectMediaItem(rawItem).then((item) => {
+            const serverUrl = String(item.serverUrl || "").trim();
+            const apiKey = String(item.apiKey || "").trim();
+            const body = item.body || {};
+            const debug = body.debug || {};
 
-        withManagerLock(async () => {
-            const state = await getManagerState();
-            state.queue.push({
-                id: crypto.randomUUID(),
-                createdAt: Date.now(),
-                serverUrl,
-                apiKey,
-                body
-            });
-            await startQueuedJobsInternal(state);
-            await saveManagerState(state);
-            if (state.activeJobs.length > 0) {
-                schedulePoll(1000);
+            if (!serverUrl || !apiKey || !body?.url) {
+                sendResponse({ ok: false, error: "Parametres manquants" });
+                return;
             }
-            sendResponse({ ok: true, queue: state.queue, state });
-        }).catch((error) => sendResponse({ ok: false, error: error.message || "Erreur file" }));
+
+            if (!debug.exactEntryFound && !debug.networkFallbackUsed) {
+                sendResponse({ ok: false, error: "Aucune requete media reseau correspondante detectee pour cet onglet. Reclique sur Detecter apres lecture de la video." });
+                return;
+            }
+
+            withManagerLock(async () => {
+                const state = await getManagerState();
+                state.queue.push({
+                    id: crypto.randomUUID(),
+                    createdAt: Date.now(),
+                    serverUrl,
+                    apiKey,
+                    body
+                });
+                await startQueuedJobsInternal(state);
+                await saveManagerState(state);
+                if (state.activeJobs.length > 0) {
+                    schedulePoll(1000);
+                }
+                sendResponse({ ok: true, queue: state.queue, state });
+            }).catch((error) => sendResponse({ ok: false, error: error.message || "Erreur file" }));
+        }).catch((error) => sendResponse({ ok: false, error: error.message || "Erreur enrichissement file" }));
 
         return true;
     }

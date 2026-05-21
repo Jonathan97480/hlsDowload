@@ -19,6 +19,10 @@ function buildRequestHeaders(headers) {
         requestHeaders.Cookie = headers.cookie;
     }
 
+    if (headers?.origin) {
+        requestHeaders.Origin = headers.origin;
+    }
+
     return requestHeaders;
 }
 

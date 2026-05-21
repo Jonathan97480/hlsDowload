@@ -20,11 +20,13 @@ function buildRequestHeaders(rawHeaders) {
     const referer = sanitizeString(source.referer);
     const userAgent = sanitizeString(source.userAgent);
     const cookie = sanitizeString(source.cookie);
+    const origin = sanitizeString(source.origin);
 
     return {
         referer,
         userAgent,
-        cookie
+        cookie,
+        origin
     };
 }
 

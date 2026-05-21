@@ -5,6 +5,10 @@ const { getBestHlsUrl } = require("./hls-quality.service");
 const { findMasterM3U8 } = require("./master-detector.service");
 const { ensureDownloadsDir, createSafeOutputName } = require("./file-output.service");
 const { createSegmentDownloadTask } = require("./hls-segment-pipeline.service");
+const {
+    buildCopyOutputOptions,
+    buildStableTranscodeOutputOptions
+} = require("./ffmpeg-output-options.service");
 const { validateOutputFile, verifySegmentIntegrity } = require("./video-validation.service");
 
 if (process.env.FFMPEG_PATH) {
@@ -53,20 +57,8 @@ function runFfmpegConvert(finalUrl, inputOptions, outputPath, hooks, mode) {
         }
 
         const outputOptions = isTranscode
-            ? [
-                "-c:v libx264",
-                "-preset veryfast",
-                "-crf 22",
-                "-pix_fmt yuv420p",
-                "-c:a aac",
-                "-b:a 128k",
-                "-movflags +faststart"
-            ]
-            : [
-                "-c copy",
-                "-bsf:a aac_adtstoasc",
-                "-movflags +faststart"
-            ];
+            ? buildStableTranscodeOutputOptions()
+            : buildCopyOutputOptions();
 
         command
             .outputOptions(outputOptions)
@@ -142,20 +134,8 @@ function runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, mode) {
         }
 
         const outputOptions = isTranscode
-            ? [
-                "-c:v libx264",
-                "-preset veryfast",
-                "-crf 22",
-                "-pix_fmt yuv420p",
-                "-c:a aac",
-                "-b:a 128k",
-                "-movflags +faststart"
-            ]
-            : [
-                "-c copy",
-                "-bsf:a aac_adtstoasc",
-                "-movflags +faststart"
-            ];
+            ? buildStableTranscodeOutputOptions()
+            : buildCopyOutputOptions();
 
         command
             .outputOptions(outputOptions)
@@ -261,7 +241,8 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
             currentTask = createSegmentDownloadTask(finalUrl, headers, outputPath, hooks);
             return currentTask.promise
                 .then((segmentResult) => {
-                    const mode = segmentResult?.mode || "copy";
+                    console.log(`[ffmpeg] Pipeline segments a renvoye: ${JSON.stringify(segmentResult || {})}`);
+                    const mode = segmentResult?.mode || "transcode";
                     console.log(`[ffmpeg] Conversion segments terminee - qualite finale: ${quality} - mode: ${mode}`);
 
                     return {
@@ -277,33 +258,18 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
                     }
 
                     console.log(`[ffmpeg] Pipeline segments indisponible: ${segmentError.message}`);
-                    console.log("[ffmpeg] Tentative 2: pipeline FFmpeg classique...");
+                    console.log("[ffmpeg] Tentative 2: pipeline FFmpeg classique en mode transcode stable...");
                     removeOutputIfExists(outputPath);
 
-                    currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "copy");
+                    currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "transcode");
                     return currentTask.promise
                         .then(() => {
                             if (cancelled) throw createCancelledError();
                             return validateOutputFile(outputPath);
                         })
-                        .catch((error) => {
-                            if (cancelled || error.message === "Telechargement annule") {
-                                throw createCancelledError();
-                            }
-                            console.log(`[ffmpeg] Copy invalide/instable: ${error.message}`);
-                            console.log("[ffmpeg] Relance en mode transcodage robuste...");
-                            removeOutputIfExists(outputPath);
-
-                            currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "transcode");
-                            return currentTask.promise
-                                .then(() => {
-                                    if (cancelled) throw createCancelledError();
-                                    return validateOutputFile(outputPath);
-                                })
-                                .then(() => ({ mode: "transcode" }));
-                        })
+                        .then(() => ({ mode: "transcode" }))
                         .then((fallbackResult) => {
-                            const mode = fallbackResult?.mode || "copy";
+                            const mode = fallbackResult?.mode || "transcode";
                             console.log(`[ffmpeg] FFmpeg terminee avec succes - qualite finale: ${quality} - mode: ${mode}`);
 
                             return {

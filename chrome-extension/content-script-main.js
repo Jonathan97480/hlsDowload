@@ -10,6 +10,35 @@ globalThis.__mediaUrlSenderContentScriptLoaded = true;
     let observerStarted = false;
     let pageHookInjected = false;
 
+function getRuntimeSafe() {
+    try {
+        if (typeof chrome === "undefined" || !chrome.runtime) {
+            return null;
+        }
+
+        if (!chrome.runtime.id) {
+            return null;
+        }
+
+        return chrome.runtime;
+    } catch (_error) {
+        return null;
+    }
+}
+
+function sendMessageSafe(payload) {
+    const runtime = getRuntimeSafe();
+    if (!runtime) {
+        return Promise.resolve(null);
+    }
+
+    try {
+        return runtime.sendMessage(payload).catch(() => null);
+    } catch (_error) {
+        return Promise.resolve(null);
+    }
+}
+
 function isYouTubePage() {
     return /^https?:\/\/(www\.)?youtube\.com\/watch\?/i.test(document.location.href) ||
            /^https?:\/\/(www\.)?youtube\.com\/shorts\//i.test(document.location.href) ||
@@ -34,13 +63,13 @@ function notifyYouTubeDetection() {
     const title = document.querySelector("yt-formatted-string.ytd-watch-metadata h1, title, h1.ytd-watch-metadata");
     const videoTitle = title ? title.textContent.trim() : document.title || "";
 
-    chrome.runtime.sendMessage({
+    sendMessageSafe({
         type: "youtubeDetected",
         videoId,
         videoTitle,
         url: document.location.href,
         context: getPageContext("youtube")
-    }).catch(() => { });
+    });
 }
 
 function getMediaCandidateKind(url) {
@@ -171,14 +200,14 @@ function pushUrl(url, source = "dom", extras = {}) {
         return false;
     }
 
-    chrome.runtime.sendMessage({
+    sendMessageSafe({
         type: "captureUrl",
         url: safeUrl,
         context: {
             ...getPageContext(source),
             ...extras
         }
-    }).catch(() => { });
+    });
 
     return true;
 }
@@ -230,8 +259,17 @@ function injectPageHook() {
         return;
     }
 
+    const runtime = getRuntimeSafe();
+    if (!runtime) {
+        return;
+    }
+
     const script = document.createElement("script");
-    script.src = chrome.runtime.getURL("page-hook.js");
+    try {
+        script.src = runtime.getURL("page-hook.js");
+    } catch (_error) {
+        return;
+    }
     script.async = false;
     script.onload = () => script.remove();
     (document.head || document.documentElement).appendChild(script);
@@ -260,20 +298,23 @@ function injectPageHook() {
         setTimeout(notifyYouTubeDetection, 5000);
     }
 
-    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-        if (message?.type === "scanPage") {
-            const found = pushCandidatesToBackground("manual-scan");
-            sendResponse({ ok: true, found, context: getPageContext("manual-scan") });
-            return undefined;
-        }
+    const runtime = getRuntimeSafe();
+    if (runtime && runtime.onMessage && typeof runtime.onMessage.addListener === "function") {
+        runtime.onMessage.addListener((message, _sender, sendResponse) => {
+            if (message?.type === "scanPage") {
+                const found = pushCandidatesToBackground("manual-scan");
+                sendResponse({ ok: true, found, context: getPageContext("manual-scan") });
+                return undefined;
+            }
 
-        if (message?.type === "checkYouTube") {
-            const isYT = isYouTubePage();
-            const videoId = isYT ? extractYouTubeVideoId() : "";
-            sendResponse({ ok: true, isYouTube: isYT, videoId });
-            return undefined;
-        }
+            if (message?.type === "checkYouTube") {
+                const isYT = isYouTubePage();
+                const videoId = isYT ? extractYouTubeVideoId() : "";
+                sendResponse({ ok: true, isYouTube: isYT, videoId });
+                return undefined;
+            }
 
-        return undefined;
-    });
+            return undefined;
+        });
+    }
 })();

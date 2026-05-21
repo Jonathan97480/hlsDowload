@@ -5,13 +5,18 @@ const express = require("express");
 const downloadRouter = require("./routes/download");
 const adminRouter = require("./routes/admin");
 const { applyCors } = require("./middleware/cors.middleware");
+const { attachRequestLogger } = require("./middleware/request-logger.middleware");
 const { startCleanupSchedule } = require("./services/cleanup.service");
 const { restorePendingJobsFromDatabase } = require("./services/download-job.service");
+const { initLogger } = require("./services/logger.service");
+
+initLogger();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(applyCors);
+app.use(attachRequestLogger);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false }));
 

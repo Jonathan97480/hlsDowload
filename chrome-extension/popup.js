@@ -30,6 +30,7 @@ const DEFAULT_SERVER_URL = "http://localhost:3000/api/download";
 const DEFAULT_API_KEY = "125456Aprt";
 let activePoller = null;
 let recentExpanded = false;
+let currentDetectedContext = {};
 stopBtn.disabled = true;
 clearQueueBtn.disabled = true;
 
@@ -119,9 +120,9 @@ function renderDownloadState(state) {
         ? "100% - Termine"
         : state.status === "cancelled"
             ? "Arrete"
-        : state.status === "failed"
-            ? "Echec"
-            : `${progress}%${timemark}`;
+            : state.status === "failed"
+                ? "Echec"
+                : `${progress}%${timemark}`;
 
     setProgress(state.status === "completed" ? 100 : progress, label);
 
@@ -245,18 +246,18 @@ function inferRecentSource(job) {
 
 function formatRecentStatus(job) {
     switch (job?.status) {
-    case "completed":
-        return "Termine";
-    case "failed":
-        return "Echec";
-    case "cancelled":
-        return "Arrete";
-    case "queued":
-        return "En attente";
-    case "running":
-        return "En cours";
-    default:
-        return job?.status || "Inconnu";
+        case "completed":
+            return "Termine";
+        case "failed":
+            return "Echec";
+        case "cancelled":
+            return "Arrete";
+        case "queued":
+            return "En attente";
+        case "running":
+            return "En cours";
+        default:
+            return job?.status || "Inconnu";
     }
 }
 
@@ -425,17 +426,12 @@ async function detectFromBackground(tabId) {
 
             mediaUrlInput.value = urlEntry.url || response.latest;
             showSection(mediaUrlSection);
+            currentDetectedContext = { ...(urlEntry.context || {}) };
 
-            // Auto-fill headers from captured context
-            if (urlEntry.context?.referer) {
-                refererInput.value = urlEntry.context.referer;
-            }
-            if (urlEntry.context?.userAgent) {
-                userAgentInput.value = urlEntry.context.userAgent;
-            }
-            if (urlEntry.context?.cookie) {
-                cookieInput.value = urlEntry.context.cookie;
-            }
+            // Always refresh header fields to avoid reusing stale cookies from previous sites.
+            refererInput.value = urlEntry.context?.referer || "";
+            userAgentInput.value = urlEntry.context?.userAgent || "";
+            cookieInput.value = urlEntry.context?.cookie || "";
 
             return true;
         }
@@ -453,16 +449,11 @@ async function detectFromPage(tabId) {
         if (response?.found?.length) {
             mediaUrlInput.value = response.found[0];
             showSection(mediaUrlSection);
+            currentDetectedContext = { ...(response.context || {}) };
 
-            if (response.context?.referer) {
-                refererInput.value = response.context.referer;
-            }
-            if (response.context?.userAgent) {
-                userAgentInput.value = response.context.userAgent;
-            }
-            if (response.context?.cookie) {
-                cookieInput.value = response.context.cookie;
-            }
+            refererInput.value = response.context?.referer || "";
+            userAgentInput.value = response.context?.userAgent || "";
+            cookieInput.value = response.context?.cookie || "";
 
             return true;
         }
@@ -524,15 +515,23 @@ async function sendToServer() {
     setResult("Ajout a la file d'attente...");
 
     try {
+        const activeTab = await getActiveTab();
         const response = await chrome.runtime.sendMessage({
             type: "addToQueue",
             item: {
                 serverUrl,
                 apiKey,
+                tabId: activeTab?.id ?? -1,
+                detectedContext: { ...currentDetectedContext },
                 body: {
                     url: mediaUrl,
                     fileName: videoName,
-                    headers: { referer, userAgent, cookie }
+                    headers: {
+                        referer,
+                        userAgent,
+                        cookie,
+                        origin: currentDetectedContext.origin || ""
+                    }
                 }
             }
         });

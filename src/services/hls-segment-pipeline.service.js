@@ -6,6 +6,7 @@ const http = require("http");
 const https = require("https");
 const { spawn } = require("child_process");
 const { downloadAndVerifySegment } = require("./segment-download.service");
+const { buildCopyOutputOptions, buildStableTranscodeOutputOptions } = require("./ffmpeg-output-options.service");
 const { validateOutputFile } = require("./video-validation.service");
 
 function buildHttpHeaders(headers) {
@@ -148,22 +149,11 @@ function runConcatTask(concatFilePath, outputPath, mode) {
     ];
 
     if (mode === "transcode") {
-        args.push(
-            "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "22",
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            "-b:a", "128k"
-        );
+        args.push(...buildStableTranscodeOutputOptions());
     } else {
-        args.push(
-            "-c", "copy",
-            "-bsf:a", "aac_adtstoasc"
-        );
+        args.push(...buildCopyOutputOptions());
     }
-
-    args.push("-movflags", "+faststart", outputPath);
+    args.push(outputPath);
 
     let child = null;
     let settled = false;
@@ -270,20 +260,9 @@ function createSegmentDownloadTask(playlistUrl, headers, outputPath, hooks = {})
         .then(async (segmentPaths) => {
             const concatFilePath = writeConcatFile(segmentPaths, tempDir);
 
-            concatTask = runConcatTask(concatFilePath, outputPath, "copy");
-            try {
-                await concatTask.promise;
-            } catch (error) {
-                if (cancelled || error.message === "Telechargement annule") {
-                    throw error;
-                }
-
-                concatTask = runConcatTask(concatFilePath, outputPath, "transcode");
-                await concatTask.promise;
-                return "transcode";
-            }
-
-            return "copy";
+            concatTask = runConcatTask(concatFilePath, outputPath, "transcode");
+            await concatTask.promise;
+            return "transcode";
         })
         .then(async (mode) => {
             if (cancelled) {

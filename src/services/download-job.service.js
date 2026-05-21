@@ -517,7 +517,7 @@ function runQueuedMediaDownload(job, startedAt, settings, sourceType) {
             message: `Telechargement termine (${result.quality || "default"})`,
             fileName: result.outputFileName,
             filePath: `/downloads/${result.outputFileName}`,
-            ffmpegMode: result.mode || (sourceType === "direct" ? "direct" : "copy")
+            ffmpegMode: result.mode || (sourceType === "direct" ? "direct" : "transcode")
         });
     })
         .catch((error) => {
