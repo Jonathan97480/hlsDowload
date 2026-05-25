@@ -40,21 +40,43 @@ function validateWithFfprobe(filePath) {
 
             const streams = Array.isArray(metadata?.streams) ? metadata.streams : [];
             const hasVideo = streams.some((stream) => stream.codec_type === "video");
+            const hasAudio = streams.some((stream) => stream.codec_type === "audio");
+            const videoStream = streams.find((stream) => stream.codec_type === "video");
+            const audioStream = streams.find((stream) => stream.codec_type === "audio");
+            const videoDuration = Number.parseFloat(videoStream?.duration || metadata?.format?.duration);
+            const audioDuration = Number.parseFloat(audioStream?.duration || metadata?.format?.duration);
 
             if (!hasVideo) {
                 reject(new Error("Aucun flux video detecte dans le MP4"));
                 return;
             }
 
-            resolve();
+            if (!hasAudio) {
+                reject(new Error("Aucun flux audio detecte dans le MP4"));
+                return;
+            }
+
+            if (Number.isFinite(videoDuration) && Number.isFinite(audioDuration)) {
+                const durationGap = Math.abs(videoDuration - audioDuration);
+                if (durationGap > Math.max(1.5, videoDuration * 0.05)) {
+                    reject(new Error(`Desynchronisation audio/video detectee (${durationGap.toFixed(2)}s)`));
+                    return;
+                }
+            }
+
+            resolve(metadata);
         });
     });
 }
 
-function validateDecodePass(filePath) {
+function validateDecodePass(filePath, mode = "av") {
     return new Promise((resolve, reject) => {
         const ffmpegBin = process.env.FFMPEG_PATH || "ffmpeg";
-        const args = ["-v", "error", "-i", filePath, "-t", "120", "-f", "null", "-"];
+        const args = ["-v", "error", "-i", filePath, "-t", "120"];
+        if (mode === "audio") {
+            args.push("-vn");
+        }
+        args.push("-f", "null", "-");
         const child = spawn(ffmpegBin, args, { stdio: ["ignore", "ignore", "pipe"] });
         let stderr = "";
 
@@ -79,7 +101,8 @@ function validateDecodePass(filePath) {
 
 async function validateOutputFile(filePath) {
     await validateWithFfprobe(filePath);
-    await validateDecodePass(filePath);
+    await validateDecodePass(filePath, "av");
+    await validateDecodePass(filePath, "audio");
 }
 
 module.exports = {

@@ -174,6 +174,11 @@ function buildModeBadge(job) {
     return '<span class="mode-badge mode-badge-unknown" title="Mode FFmpeg non disponible">? Inconnu</span>';
 }
 
+function buildAudioStrategyLabel(job) {
+    const strategy = (job?.effectiveAudioStrategy || "").trim();
+    return strategy ? `audio ${strategy}` : "audio inconnu";
+}
+
 function renderJobs(jobs) {
     if (!jobs || jobs.length === 0) {
         jobsTableBody.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">Aucun job recent.</td></tr>';
@@ -200,7 +205,7 @@ function renderJobs(jobs) {
             </td>
             <td>
               <div class="job-file">${job.fileName || job.preferredName || "En attente"}</div>
-                            <div class="job-quality">${job.quality || "qualite inconnue"} · ${buildModeBadge(job)}</div>
+                            <div class="job-quality">${job.quality || "qualite inconnue"} · ${buildModeBadge(job)} · ${buildAudioStrategyLabel(job)}</div>
             </td>
             <td>
               <div>Flux: ${formatDuration(job.durationMs || 0)}</div>
@@ -246,7 +251,7 @@ function renderHistory(history) {
                             <div class="job-file">${job.fileName || job.preferredName || "--"}</div>
                             <div class="job-msg">${job.message || ""}</div>
                         </td>
-                        <td>${buildModeBadge(job)}</td>
+                        <td>${buildModeBadge(job)}<div class="job-msg">${buildAudioStrategyLabel(job)}</div></td>
                         <td><span class="status-pill ${statusClass}">${job.status}</span></td>
                     </tr>
                 `;

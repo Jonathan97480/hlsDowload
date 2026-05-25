@@ -21,12 +21,12 @@ const activeTasks = new Map();
 const upsertJobStatement = db.prepare(`
     INSERT INTO jobs (
         job_id, request_key, url, preferred_name, headers_json, status, progress,
-        timemark, message, file_name, file_path, ffmpeg_mode, file_size_bytes, source_ip,
+        timemark, message, file_name, file_path, ffmpeg_mode, effective_audio_strategy, file_size_bytes, source_ip,
         client_id, user_agent, started_at, completed_at, duration_ms, error,
         updated_at, created_at
     ) VALUES (
         @jobId, @requestKey, @url, @preferredName, @headersJson, @status, @progress,
-        @timemark, @message, @fileName, @filePath, @ffmpegMode, @fileSizeBytes, @sourceIp,
+        @timemark, @message, @fileName, @filePath, @ffmpegMode, @effectiveAudioStrategy, @fileSizeBytes, @sourceIp,
         @clientId, @userAgent, @startedAt, @completedAt, @durationMs, @error,
         @updatedAt, @createdAt
     )
@@ -42,6 +42,7 @@ const upsertJobStatement = db.prepare(`
         file_name = excluded.file_name,
         file_path = excluded.file_path,
         ffmpeg_mode = excluded.ffmpeg_mode,
+        effective_audio_strategy = excluded.effective_audio_strategy,
         file_size_bytes = excluded.file_size_bytes,
         source_ip = excluded.source_ip,
         client_id = excluded.client_id,
@@ -79,6 +80,7 @@ function rowToJob(row) {
         fileName: row.file_name || "",
         filePath: row.file_path || "",
         ffmpegMode: row.ffmpeg_mode || "",
+        effectiveAudioStrategy: row.effective_audio_strategy || "",
         fileSizeBytes: row.file_size_bytes || 0,
         sourceIp: row.source_ip || "",
         clientId: row.client_id || "",
@@ -106,6 +108,7 @@ function persistJob(job) {
         fileName: job.fileName || "",
         filePath: job.filePath || "",
         ffmpegMode: job.ffmpegMode || "",
+        effectiveAudioStrategy: job.effectiveAudioStrategy || "",
         fileSizeBytes: Number.isFinite(job.fileSizeBytes) ? job.fileSizeBytes : 0,
         sourceIp: job.sourceIp || "",
         clientId: job.clientId || "",
@@ -158,6 +161,7 @@ function createJob(url, preferredName = "") {
         fileName: "",
         filePath: "",
         ffmpegMode: "",
+        effectiveAudioStrategy: "",
         fileSizeBytes: 0,
         sourceIp: "",
         clientId: "",
@@ -517,7 +521,8 @@ function runQueuedMediaDownload(job, startedAt, settings, sourceType) {
             message: `Telechargement termine (${result.quality || "default"})`,
             fileName: result.outputFileName,
             filePath: `/downloads/${result.outputFileName}`,
-            ffmpegMode: result.mode || (sourceType === "direct" ? "direct" : "transcode")
+            ffmpegMode: result.mode || (sourceType === "direct" ? "direct" : "transcode"),
+            effectiveAudioStrategy: result.effectiveAudioStrategy || (sourceType === "direct" ? "copy-source" : "")
         });
     })
         .catch((error) => {
@@ -590,7 +595,8 @@ function runQueuedYouTubeDownload(job, startedAt) {
             message: "Telechargement YouTube termine",
             fileName: result.outputFileName,
             filePath: result.filePath,
-            ffmpegMode: "yt-dlp"
+            ffmpegMode: "yt-dlp",
+            effectiveAudioStrategy: result.effectiveAudioStrategy || "yt-dlp"
         });
     })
         .catch((error) => {

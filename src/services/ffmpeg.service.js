@@ -7,13 +7,12 @@ const { ensureDownloadsDir, createSafeOutputName } = require("./file-output.serv
 const { createSegmentDownloadTask } = require("./hls-segment-pipeline.service");
 const {
     buildCopyOutputOptions,
-    buildStableTranscodeOutputOptions
+    buildStableTranscodeOutputOptions,
+    buildVideoTranscodeCopyAudioOutputOptions
 } = require("./ffmpeg-output-options.service");
 const { validateOutputFile, verifySegmentIntegrity } = require("./video-validation.service");
 
-if (process.env.FFMPEG_PATH) {
-    ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
-}
+if (process.env.FFMPEG_PATH) ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
 
 function buildInputOptions(headers) {
     const options = [];
@@ -46,44 +45,6 @@ function buildInputOptions(headers) {
     return options;
 }
 
-function runFfmpegConvert(finalUrl, inputOptions, outputPath, hooks, mode) {
-    const isTranscode = mode === "transcode";
-
-    return new Promise((resolve, reject) => {
-        const command = ffmpeg(finalUrl);
-
-        if (inputOptions.length > 0) {
-            command.inputOptions(inputOptions);
-        }
-
-        const outputOptions = isTranscode
-            ? buildStableTranscodeOutputOptions()
-            : buildCopyOutputOptions();
-
-        command
-            .outputOptions(outputOptions)
-            .format("mp4")
-            .on("start", () => {
-                console.log(`[ffmpeg] FFmpeg demarree (${mode})`);
-                if (typeof hooks.onStart === "function") {
-                    hooks.onStart();
-                }
-            })
-            .on("progress", (progress) => {
-                if (typeof hooks.onProgress === "function") {
-                    hooks.onProgress(progress || {});
-                }
-            })
-            .on("end", () => {
-                resolve();
-            })
-            .on("error", (error) => {
-                reject(new Error(`Echec FFmpeg (${mode}): ${error.message}`));
-            })
-            .save(outputPath);
-    });
-}
-
 function removeOutputIfExists(outputPath) {
     try {
         if (fs.existsSync(outputPath)) {
@@ -108,8 +69,61 @@ function createHttpHeaders(headers) {
     return httpHeaders;
 }
 
-function runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, mode) {
-    const isTranscode = mode === "transcode";
+function normalizeFfmpegMode(modeOrOptions) {
+    if (typeof modeOrOptions === "string") {
+        return { mode: modeOrOptions, syncProfile: "soft" };
+    }
+    return { mode: modeOrOptions?.mode || "transcode", syncProfile: modeOrOptions?.syncProfile || "soft" };
+}
+
+function buildEffectiveAudioStrategy(mode, syncProfile) {
+    if (mode === "copy") return "copy-source";
+    if (mode === "direct") return "copy-source";
+    if (mode === "transcode-copy-audio") return "copy-source";
+    if (mode === "yt-dlp") return "yt-dlp";
+    if (mode === "transcode") return `transcode-${syncProfile || "soft"}`;
+    return "";
+}
+function runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef, options = {}) {
+    const syncProfile = options.syncProfile || "soft";
+    const preferAudioCopy = options.preferAudioCopy !== false;
+    removeOutputIfExists(outputPath);
+
+    let task = null;
+    const runAttempt = (mode, logMessage) => {
+        console.log(logMessage);
+        task = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, { mode, syncProfile });
+        return task.promise
+            .then(() => {
+                if (cancelledRef.cancelled) throw createCancelledError();
+                return validateOutputFile(outputPath);
+            })
+            .then(() => ({ mode, effectiveAudioStrategy: buildEffectiveAudioStrategy(mode, syncProfile) }));
+    };
+
+    const promise = (preferAudioCopy
+        ? runAttempt("transcode-copy-audio", "[ffmpeg] Tentative 2: transcode video + copie audio...")
+            .catch((error) => {
+                if (cancelledRef.cancelled || error.message === "Telechargement annule") throw createCancelledError();
+                console.log(`[ffmpeg] Copie audio impossible: ${error.message}`);
+                removeOutputIfExists(outputPath);
+                return runAttempt("transcode", "[ffmpeg] Tentative 3: transcode complet avec profil audio tres doux...");
+            })
+        : runAttempt("transcode", "[ffmpeg] Tentative 2: pipeline FFmpeg classique en mode transcode profil tres doux..."));
+
+    return {
+        promise,
+        cancel: () => {
+            if (!task || typeof task.cancel !== "function") return false;
+            return task.cancel();
+        }
+    };
+}
+
+function runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, modeOrOptions) {
+    const ffmpegMode = normalizeFfmpegMode(modeOrOptions);
+    const isTranscode = ffmpegMode.mode === "transcode";
+    const isVideoTranscodeCopyAudio = ffmpegMode.mode === "transcode-copy-audio";
     let command = null;
     let settled = false;
     let cancelled = false;
@@ -134,14 +148,16 @@ function runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, mode) {
         }
 
         const outputOptions = isTranscode
-            ? buildStableTranscodeOutputOptions()
-            : buildCopyOutputOptions();
+            ? buildStableTranscodeOutputOptions(ffmpegMode.syncProfile)
+            : isVideoTranscodeCopyAudio
+                ? buildVideoTranscodeCopyAudioOutputOptions()
+                : buildCopyOutputOptions();
 
         command
             .outputOptions(outputOptions)
             .format("mp4")
             .on("start", () => {
-                console.log(`[ffmpeg] FFmpeg demarree (${mode})`);
+                console.log(`[ffmpeg] FFmpeg demarree (${ffmpegMode.mode}, sync=${ffmpegMode.syncProfile})`);
                 if (typeof hooks.onStart === "function") {
                     hooks.onStart();
                 }
@@ -165,7 +181,7 @@ function runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, mode) {
                     safeReject(createCancelledError());
                     return;
                 }
-                safeReject(new Error(`Echec FFmpeg (${mode}): ${error.message}`));
+                safeReject(new Error(`Echec FFmpeg (${ffmpegMode.mode}): ${error.message}`));
             })
             .save(outputPath);
     });
@@ -204,11 +220,11 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
 
     let currentTask = null;
     let cancelled = false;
+    const cancelledRef = { cancelled: false };
     const cancel = () => {
         cancelled = true;
-        if (currentTask && typeof currentTask.cancel === "function") {
-            currentTask.cancel();
-        }
+        cancelledRef.cancelled = true;
+        if (currentTask && typeof currentTask.cancel === "function") currentTask.cancel();
         removeOutputIfExists(outputPath);
         return true;
     };
@@ -219,7 +235,6 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
             console.log(`[ffmpeg] URL source: ${sourceUrl}`);
             console.log(`[ffmpeg] Master detection: ${masterResult.method} (${masterResult.isMaster ? "✅ master" : "⚠️ non-master"})`);
 
-            // Étape 2: Analyser la meilleure qualité
             return getBestHlsUrl(masterResult.url, httpHeaders).then((qualityInfo) => ({
                 ...qualityInfo,
                 masterMethod: masterResult.method,
@@ -230,12 +245,39 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
             const finalUrl = qualityInfo.bestUrl || sourceUrl;
             const quality = qualityInfo.quality || "unknown";
             const isFallback = qualityInfo.quality === "fallback" || qualityInfo.quality === "unknown";
+            const skipSegmentPipeline = Boolean(qualityInfo.skipSegmentPipeline);
 
             if (isFallback && !qualityInfo.isMaster) {
                 console.log(`[ffmpeg] ⚠️  AVERTISSEMENT: URL non-master et qualité non déterminée`);
             }
             console.log(`[ffmpeg] Qualite: ${quality}`);
             console.log(`[ffmpeg] URL finale: ${finalUrl}`);
+            if (qualityInfo.delivery) console.log(`[ffmpeg] Livraison HLS: ${qualityInfo.delivery}`);
+            if (qualityInfo.playlistType) console.log(`[ffmpeg] Type playlist: ${qualityInfo.playlistType}`);
+            if (qualityInfo.playlistAnalysis) console.log(`[ffmpeg] Analyse selection: ${JSON.stringify(qualityInfo.playlistAnalysis)}`);
+
+            if (qualityInfo.isLiveLike) {
+                const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef, {
+                    syncProfile: "aggressive",
+                    logMessage: `[ffmpeg] Pipeline segments ignore: playlist ${qualityInfo.playlistType} detectee, bascule vers FFmpeg classique...`
+                });
+                currentTask = fallback;
+                return fallback.promise.then(() => ({ outputFileName, outputPath, quality, mode: "transcode", effectiveAudioStrategy: buildEffectiveAudioStrategy("transcode", "aggressive") }));
+            }
+
+            if (qualityInfo.playlistAnalysis?.recommendedConcatMode === "transcode") {
+                console.log("[ffmpeg] Pipeline segments ignore: VOD instable detectee, test FFmpeg direct avec copie audio prioritaire.");
+                const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef);
+                currentTask = fallback;
+                return fallback.promise.then((fallbackResult) => ({ outputFileName, outputPath, quality, mode: fallbackResult?.mode || "transcode", effectiveAudioStrategy: fallbackResult?.effectiveAudioStrategy || "" }));
+            }
+
+            if (skipSegmentPipeline) {
+                console.log("[ffmpeg] Pipeline segments ignore: audio HLS separee detectee.");
+                const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef);
+                currentTask = fallback;
+                return fallback.promise.then(() => ({ outputFileName, outputPath, quality, mode: "transcode", effectiveAudioStrategy: buildEffectiveAudioStrategy("transcode-copy-audio", "soft") }));
+            }
 
             console.log("[ffmpeg] Tentative 1: pipeline segments HLS...");
             currentTask = createSegmentDownloadTask(finalUrl, headers, outputPath, hooks);
@@ -243,41 +285,21 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
                 .then((segmentResult) => {
                     console.log(`[ffmpeg] Pipeline segments a renvoye: ${JSON.stringify(segmentResult || {})}`);
                     const mode = segmentResult?.mode || "transcode";
+                    const analysis = segmentResult?.analysis || null;
+                    if (analysis) console.log(`[ffmpeg] Analyse playlist: ${JSON.stringify(analysis)}`);
                     console.log(`[ffmpeg] Conversion segments terminee - qualite finale: ${quality} - mode: ${mode}`);
-
-                    return {
-                        outputFileName,
-                        outputPath,
-                        quality,
-                        mode
-                    };
+                    return { outputFileName, outputPath, quality, mode, effectiveAudioStrategy: buildEffectiveAudioStrategy(mode, analysis?.recommendedAudioSyncProfile) };
                 })
                 .catch((segmentError) => {
-                    if (cancelled || segmentError.message === "Telechargement annule") {
-                        throw createCancelledError();
-                    }
-
+                    if (cancelled || segmentError.message === "Telechargement annule") throw createCancelledError();
                     console.log(`[ffmpeg] Pipeline segments indisponible: ${segmentError.message}`);
-                    console.log("[ffmpeg] Tentative 2: pipeline FFmpeg classique en mode transcode stable...");
-                    removeOutputIfExists(outputPath);
-
-                    currentTask = runFfmpegConvertTask(finalUrl, inputOptions, outputPath, hooks, "transcode");
-                    return currentTask.promise
-                        .then(() => {
-                            if (cancelled) throw createCancelledError();
-                            return validateOutputFile(outputPath);
-                        })
-                        .then(() => ({ mode: "transcode" }))
+                    const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef);
+                    currentTask = fallback;
+                    return fallback.promise
                         .then((fallbackResult) => {
                             const mode = fallbackResult?.mode || "transcode";
                             console.log(`[ffmpeg] FFmpeg terminee avec succes - qualite finale: ${quality} - mode: ${mode}`);
-
-                            return {
-                                outputFileName,
-                                outputPath,
-                                quality,
-                                mode
-                            };
+                            return { outputFileName, outputPath, quality, mode, effectiveAudioStrategy: fallbackResult?.effectiveAudioStrategy || "" };
                         });
                 });
         });

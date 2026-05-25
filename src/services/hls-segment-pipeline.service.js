@@ -2,11 +2,11 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
-const http = require("http");
-const https = require("https");
 const { spawn } = require("child_process");
-const { downloadAndVerifySegment } = require("./segment-download.service");
+const { createSegmentDownloadTask: createSingleSegmentDownloadTask } = require("./segment-download.service");
 const { buildCopyOutputOptions, buildStableTranscodeOutputOptions } = require("./ffmpeg-output-options.service");
+const { analyzePlaylist } = require("./hls-playlist-analysis.service");
+const { fetchHlsText } = require("./hls-http.service");
 const { validateOutputFile } = require("./video-validation.service");
 
 function buildHttpHeaders(headers) {
@@ -25,49 +25,6 @@ function buildHttpHeaders(headers) {
     }
 
     return requestHeaders;
-}
-
-function fetchText(url, headers, redirectCount = 0) {
-    const transport = url.startsWith("https://") ? https : http;
-
-    return new Promise((resolve, reject) => {
-        const req = transport.get(url, { headers }, (response) => {
-            const statusCode = response.statusCode || 0;
-            const location = response.headers.location;
-
-            if (statusCode >= 300 && statusCode < 400 && location) {
-                response.resume();
-
-                if (redirectCount >= 5) {
-                    reject(new Error("Trop de redirections pour la playlist HLS"));
-                    return;
-                }
-
-                const nextUrl = new URL(location, url).href;
-                fetchText(nextUrl, headers, redirectCount + 1).then(resolve).catch(reject);
-                return;
-            }
-
-            if (statusCode < 200 || statusCode >= 300) {
-                response.resume();
-                reject(new Error(`Lecture playlist refusee (${statusCode})`));
-                return;
-            }
-
-            let data = "";
-            response.setEncoding("utf8");
-            response.on("data", (chunk) => {
-                data += chunk;
-            });
-            response.on("end", () => resolve(data));
-            response.on("error", (error) => reject(new Error(`Erreur lecture playlist: ${error.message}`)));
-        });
-
-        req.setTimeout(20000, () => {
-            req.destroy(new Error("Timeout sur la playlist HLS"));
-        });
-        req.on("error", (error) => reject(new Error(`Erreur requete playlist: ${error.message}`)));
-    });
 }
 
 function parseMediaPlaylist(playlistUrl, content) {
@@ -97,7 +54,10 @@ function parseMediaPlaylist(playlistUrl, content) {
         throw new Error("Aucun segment detecte dans la playlist");
     }
 
-    return segmentUrls;
+    return {
+        segmentUrls,
+        analysis: analyzePlaylist(lines)
+    };
 }
 
 function createTempDir() {
@@ -139,7 +99,7 @@ function writeConcatFile(segmentPaths, tempDir) {
     return concatFilePath;
 }
 
-function runConcatTask(concatFilePath, outputPath, mode) {
+function runConcatTask(concatFilePath, outputPath, mode, syncProfile = "soft") {
     const ffmpegBin = process.env.FFMPEG_PATH || "ffmpeg";
     const args = [
         "-y",
@@ -149,7 +109,7 @@ function runConcatTask(concatFilePath, outputPath, mode) {
     ];
 
     if (mode === "transcode") {
-        args.push(...buildStableTranscodeOutputOptions());
+        args.push(...buildStableTranscodeOutputOptions(syncProfile));
     } else {
         args.push(...buildCopyOutputOptions());
     }
@@ -215,56 +175,119 @@ function runConcatTask(concatFilePath, outputPath, mode) {
     };
 }
 
+function createConcurrentSegmentDownloadTask(segmentUrls, tempDir, headers, hooks, shouldCancel) {
+    const maxParallel = Math.min(
+        8,
+        Math.max(2, Number.parseInt(process.env.HLS_SEGMENT_CONCURRENCY || "4", 10) || 4)
+    );
+    const segmentPaths = new Array(segmentUrls.length);
+    const activeTasks = new Set();
+    let nextIndex = 0;
+    let completedCount = 0;
+
+    async function worker() {
+        while (nextIndex < segmentUrls.length) {
+            if (shouldCancel()) {
+                throw new Error("Telechargement annule");
+            }
+
+            const index = nextIndex;
+            nextIndex += 1;
+
+            const segmentUrl = segmentUrls[index];
+            const segmentPath = path.join(tempDir, `segment-${String(index).padStart(5, "0")}.ts`);
+            const segmentTask = createSingleSegmentDownloadTask(segmentUrl, headers, segmentPath);
+            activeTasks.add(segmentTask);
+            try {
+                await segmentTask.promise;
+            } finally {
+                activeTasks.delete(segmentTask);
+            }
+            segmentPaths[index] = segmentPath;
+            completedCount += 1;
+
+            if (typeof hooks.onProgress === "function") {
+                const percent = Math.max(1, Math.min(90, Math.round((completedCount / segmentUrls.length) * 90)));
+                hooks.onProgress({ percent, timemark: "" });
+            }
+        }
+    }
+
+    const promise = Promise.all(
+        Array.from({ length: Math.min(maxParallel, segmentUrls.length) }, () => worker())
+    ).then(() => segmentPaths);
+
+    return {
+        promise,
+        cancel: () => {
+            for (const task of activeTasks) {
+                if (typeof task.cancel === "function") {
+                    task.cancel();
+                }
+            }
+            return true;
+        }
+    };
+}
+
 function createSegmentDownloadTask(playlistUrl, headers, outputPath, hooks = {}) {
     const httpHeaders = buildHttpHeaders(headers);
     const tempDir = createTempDir();
     let cancelled = false;
     let concatTask = null;
+    let downloadPhaseActive = false;
+    let activeDownloadTask = null;
 
     const cancel = () => {
         cancelled = true;
+        if (activeDownloadTask && typeof activeDownloadTask.cancel === "function") {
+            activeDownloadTask.cancel();
+        }
         if (concatTask && typeof concatTask.cancel === "function") {
             concatTask.cancel();
         }
         removeOutputIfExists(outputPath);
-        cleanupTempDir(tempDir);
+        if (!downloadPhaseActive) {
+            cleanupTempDir(tempDir);
+        }
         return true;
     };
 
-    const promise = fetchText(playlistUrl, httpHeaders)
+    const promise = fetchHlsText(playlistUrl, httpHeaders)
         .then((content) => parseMediaPlaylist(playlistUrl, content))
-        .then(async (segmentUrls) => {
+        .then(async ({ segmentUrls, analysis }) => {
+            if (analysis?.isLiveLike) {
+                throw new Error(`Playlist ${analysis.playlistType || "live"} non supportee en mode segments`);
+            }
+
             if (typeof hooks.onStart === "function") {
                 hooks.onStart();
             }
 
-            const segmentPaths = [];
+            downloadPhaseActive = true;
+            activeDownloadTask = createConcurrentSegmentDownloadTask(
+                segmentUrls,
+                tempDir,
+                headers,
+                hooks,
+                () => cancelled
+            );
+            const segmentPaths = await activeDownloadTask.promise;
+            activeDownloadTask = null;
+            downloadPhaseActive = false;
 
-            for (const [index, segmentUrl] of segmentUrls.entries()) {
-                if (cancelled) {
-                    throw new Error("Telechargement annule");
-                }
-
-                const segmentPath = path.join(tempDir, `segment-${String(index).padStart(5, "0")}.ts`);
-                await downloadAndVerifySegment(segmentUrl, headers, segmentPath);
-                segmentPaths.push(segmentPath);
-
-                if (typeof hooks.onProgress === "function") {
-                    const percent = Math.max(1, Math.min(90, Math.round(((index + 1) / segmentUrls.length) * 90)));
-                    hooks.onProgress({ percent, timemark: "" });
-                }
-            }
-
-            return segmentPaths;
+            return { segmentPaths, analysis };
         })
-        .then(async (segmentPaths) => {
+        .then(async ({ segmentPaths, analysis }) => {
             const concatFilePath = writeConcatFile(segmentPaths, tempDir);
+            const concatMode = analysis.recommendedConcatMode || "transcode";
+            const syncProfile = analysis.recommendedAudioSyncProfile || "soft";
 
-            concatTask = runConcatTask(concatFilePath, outputPath, "transcode");
+            concatTask = runConcatTask(concatFilePath, outputPath, concatMode, syncProfile);
             await concatTask.promise;
-            return "transcode";
+            return { mode: concatMode, analysis };
         })
-        .then(async (mode) => {
+        .then(async ({ mode, analysis }) => {
             if (cancelled) {
                 throw new Error("Telechargement annule");
             }
@@ -276,7 +299,7 @@ function createSegmentDownloadTask(playlistUrl, headers, outputPath, hooks = {})
             }
 
             cleanupTempDir(tempDir);
-            return { mode };
+            return { mode, analysis };
         })
         .catch((error) => {
             removeOutputIfExists(outputPath);

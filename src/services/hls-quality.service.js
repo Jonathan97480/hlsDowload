@@ -1,59 +1,14 @@
-const https = require("https");
-const http = require("http");
+const { parseMasterPlaylist } = require("./hls-master-playlist.service");
+const { fetchHlsText } = require("./hls-http.service");
+const { analyzePlaylist } = require("./hls-playlist-analysis.service");
 
 function parseM3u8(content) {
-    const variants = [];
-    const lines = content.split("\n");
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-
-        if (line.startsWith("#EXT-X-STREAM-INF:")) {
-            const attrs = line.substring("#EXT-X-STREAM-INF:".length);
-            const nextLine = lines[i + 1]?.trim();
-
-            if (!nextLine || nextLine.startsWith("#")) {
-                continue;
-            }
-
-            const resolution = attrs.match(/RESOLUTION=(\d+)x(\d+)/);
-            const bandwidth = attrs.match(/BANDWIDTH=(\d+)/);
-
-            variants.push({
-                url: nextLine,
-                resolution: resolution ? { width: parseInt(resolution[1]), height: parseInt(resolution[2]) } : null,
-                bandwidth: bandwidth ? parseInt(bandwidth[1]) : 0,
-                pixels: resolution ? parseInt(resolution[1]) * parseInt(resolution[2]) : 0
-            });
-        }
-    }
-
-    return variants;
+    return parseMasterPlaylist(content).variants;
 }
 
-function fetchM3u8(url, headers = {}) {
-    return new Promise((resolve, reject) => {
-        const protocol = url.startsWith("https") ? https : http;
-
-        const defaultHeaders = { "User-Agent": "Mozilla/5.0" };
-        const mergedHeaders = { ...defaultHeaders, ...headers };
-
-        protocol.get(url, { headers: mergedHeaders }, (res) => {
-            let data = "";
-
-            res.on("data", (chunk) => {
-                data += chunk;
-            });
-
-            res.on("end", () => {
-                if (res.statusCode === 200) {
-                    resolve(data);
-                } else {
-                    reject(new Error(`HTTP ${res.statusCode}`));
-                }
-            });
-        }).on("error", reject);
-    });
+function analyzeMediaPlaylistContent(content) {
+    const lines = String(content || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return analyzePlaylist(lines);
 }
 
 function selectBestVariant(variants) {
@@ -61,7 +16,10 @@ function selectBestVariant(variants) {
         return null;
     }
 
-    return variants.reduce((best, current) => {
+    const playableVariants = variants.filter((variant) => variant.hasUsableAudio);
+    const candidates = playableVariants.length > 0 ? playableVariants : variants;
+
+    return candidates.reduce((best, current) => {
         if (!best) return current;
         if (current.pixels > best.pixels) return current;
         if (current.pixels === best.pixels && current.bandwidth > best.bandwidth) return current;
@@ -71,13 +29,21 @@ function selectBestVariant(variants) {
 
 async function getBestHlsUrl(sourceUrl, headers = {}) {
     try {
-        const m3u8Content = await fetchM3u8(sourceUrl, headers);
+        const m3u8Content = await fetchHlsText(sourceUrl, headers);
         const variants = parseM3u8(m3u8Content);
 
         // Si pas de variantes, c'est une media playlist directe
         if (!variants || variants.length === 0) {
             console.log(`[hls-quality] Aucune variante trouvée - media playlist directe`);
-            return { originalUrl: sourceUrl, quality: "direct", bestUrl: sourceUrl };
+            const playlistAnalysis = analyzeMediaPlaylistContent(m3u8Content);
+            return {
+                originalUrl: sourceUrl,
+                quality: "direct",
+                bestUrl: sourceUrl,
+                playlistAnalysis,
+                playlistType: playlistAnalysis.playlistType,
+                isLiveLike: playlistAnalysis.isLiveLike
+            };
         }
 
         const best = selectBestVariant(variants);
@@ -88,15 +54,22 @@ async function getBestHlsUrl(sourceUrl, headers = {}) {
 
         const bestUrl = best.url.startsWith("http") ? best.url : new URL(best.url, sourceUrl).href;
         const qualityStr = best.resolution ? `${best.resolution.width}x${best.resolution.height}` : "unknown";
+        const requiresExternalAudio = Boolean(best.requiresExternalAudio);
+        const selectedUrl = requiresExternalAudio ? sourceUrl : bestUrl;
+        const delivery = requiresExternalAudio ? "master-with-audio-group" : "media-playlist";
 
         console.log(`[hls-quality] Variantes trouvées: ${variants.length}`);
-        console.log(`[hls-quality] Meilleure: ${qualityStr} | ${Math.round(best.bandwidth / 1000)} kbps`);
+        console.log(`[hls-quality] Meilleure: ${qualityStr} | ${Math.round(best.bandwidth / 1000)} kbps | ${delivery}`);
 
         return {
             originalUrl: sourceUrl,
-            bestUrl,
+            bestUrl: selectedUrl,
             quality: qualityStr,
             bandwidth: best.bandwidth,
+            requiresExternalAudio,
+            delivery,
+            skipSegmentPipeline: requiresExternalAudio,
+            playlistAnalysis: analyzeMediaPlaylistContent(await fetchHlsText(selectedUrl, headers).catch(() => "")),
             info: best
         };
     } catch (error) {

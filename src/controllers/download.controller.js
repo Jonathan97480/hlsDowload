@@ -172,6 +172,7 @@ function getDownloadStatus(req, res) {
         filePath: job.filePath,
         sourceIp: job.sourceIp || "",
         ffmpegMode: job.ffmpegMode || "",
+        effectiveAudioStrategy: job.effectiveAudioStrategy || "",
         error: job.error
     });
 }

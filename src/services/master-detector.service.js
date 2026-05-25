@@ -1,25 +1,4 @@
-const https = require("https");
-const http = require("http");
-
-function fetchUrl(url, headers = {}) {
-    return new Promise((resolve, reject) => {
-        const protocol = url.startsWith("https") ? https : http;
-
-        const defaultHeaders = { "User-Agent": "Mozilla/5.0" };
-        const mergedHeaders = { ...defaultHeaders, ...headers };
-
-        // Log headers being used
-        if (Object.keys(headers).length > 0) {
-            console.log(`[master-detector] 📤 Headers: ${JSON.stringify(Object.keys(mergedHeaders))}`);
-        }
-
-        protocol.get(url, { headers: mergedHeaders }, (res) => {
-            let data = "";
-            res.on("data", (chunk) => (data += chunk));
-            res.on("end", () => resolve(data));
-        }).on("error", reject);
-    });
-}
+const { fetchHlsText, mergeHeaders } = require("./hls-http.service");
 
 function isMasterPlaylist(content) {
     return /EXT-X-STREAM-INF|#EXT-X-STREAM-INF/i.test(content);
@@ -94,12 +73,13 @@ async function findMasterM3U8(sourceUrl, headers = {}) {
 
     if (Object.keys(headers).length > 0) {
         console.log(`[master-detector] 📋 Headers fournis: ${Object.keys(headers).join(", ")}`);
+        console.log(`[master-detector] 📤 Headers: ${JSON.stringify(Object.keys(mergeHeaders(headers)))}`);
     }
 
     try {
         // Essai 1: Fetch l'URL fournie
         console.log(`[master-detector] Fetch #1: URL originale`);
-        const content1 = await fetchUrl(sourceUrl, headers);
+        const content1 = await fetchHlsText(sourceUrl, headers);
 
         const variants1 = (content1.match(/#EXT-X-STREAM-INF/g) || []).length;
         console.log(`[master-detector] ℹ️  Variantes trouvées: ${variants1}`);
@@ -118,7 +98,7 @@ async function findMasterM3U8(sourceUrl, headers = {}) {
             for (const guessedUrl of guessedUrls) {
                 console.log(`[master-detector] Fetch #${attemptNum}: URL devinee: ${guessedUrl}`);
                 try {
-                    const guessedContent = await fetchUrl(guessedUrl, headers);
+                    const guessedContent = await fetchHlsText(guessedUrl, headers);
 
                     if (isMasterPlaylist(guessedContent)) {
                         console.log(`[master-detector] ✅ URL devinee est un master`);

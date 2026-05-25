@@ -9,14 +9,26 @@ function buildCopyOutputOptions() {
     ];
 }
 
-function buildStableTranscodeOutputOptions() {
+function buildAudioResyncFilter(syncProfile = "soft") {
+    if (syncProfile === "aggressive") {
+        return "aresample=async=1:first_pts=0";
+    }
+
+    if (syncProfile === "gentle") {
+        return "aresample=async=120:min_comp=0.001:min_hard_comp=0.050000:first_pts=0";
+    }
+
+    return "aresample=async=40:min_comp=0.001:min_hard_comp=0.020000:first_pts=0";
+}
+
+function buildStableTranscodeOutputOptions(syncProfile = "soft") {
     return [
         "-fflags",
         "+genpts",
         "-vsync",
         "cfr",
         "-af",
-        "aresample=async=1:first_pts=0",
+        buildAudioResyncFilter(syncProfile),
         "-c:v",
         "libx264",
         "-preset",
@@ -36,7 +48,32 @@ function buildStableTranscodeOutputOptions() {
     ];
 }
 
+function buildVideoTranscodeCopyAudioOutputOptions() {
+    return [
+        "-fflags",
+        "+genpts",
+        "-vsync",
+        "cfr",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "22",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        "-avoid_negative_ts",
+        "make_zero"
+    ];
+}
+
 module.exports = {
     buildCopyOutputOptions,
-    buildStableTranscodeOutputOptions
+    buildAudioResyncFilter,
+    buildStableTranscodeOutputOptions,
+    buildVideoTranscodeCopyAudioOutputOptions
 };

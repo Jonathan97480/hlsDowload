@@ -31,10 +31,11 @@
   - settings
 - Verifier la persistance complete de `settings_json`, notamment `maxTitleLength`.
 - Ajouter des logs plus structures avec `jobId`, type de source, mode final et erreur normalisee.
-- Revoir le reglage de resynchronisation audio HLS pour reduire les micro-sauts audibles introduits par le mode `transcode`:
-  - confirmer sur plusieurs sources si `aresample=async=1:first_pts=0` est trop agressif
-  - tester un profil de correction audio plus doux
-  - envisager un transcodage conditionnel reserve aux flux detectes comme instables
+- Stabilisation audio HLS:
+  - valide sur un flux reel: `aresample=async=1:first_pts=0` etait trop agressif
+  - valide sur un flux reel: profil audio `soft` meilleur que `aggressive`
+  - valide sur un flux reel: bypass du pipeline segments instable vers `transcode-copy-audio` supprime les sauts audibles
+  - a confirmer sur plusieurs autres sources HLS avant generalisation complete
 
 ## Priorite Basse
 

@@ -56,6 +56,7 @@ function createSchema(database) {
             file_name TEXT DEFAULT '',
             file_path TEXT DEFAULT '',
             ffmpeg_mode TEXT DEFAULT '',
+            effective_audio_strategy TEXT DEFAULT '',
             file_size_bytes INTEGER DEFAULT 0,
             source_ip TEXT DEFAULT '',
             client_id TEXT DEFAULT '',
@@ -80,6 +81,9 @@ function ensureJobsColumns(database) {
 
     if (!names.has("ffmpeg_mode")) {
         database.exec("ALTER TABLE jobs ADD COLUMN ffmpeg_mode TEXT DEFAULT ''");
+    }
+    if (!names.has("effective_audio_strategy")) {
+        database.exec("ALTER TABLE jobs ADD COLUMN effective_audio_strategy TEXT DEFAULT ''");
     }
 }
 
