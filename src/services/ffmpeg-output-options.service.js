@@ -52,8 +52,7 @@ function buildVideoTranscodeCopyAudioOutputOptions() {
     return [
         "-fflags",
         "+genpts",
-        "-vsync",
-        "cfr",
+        // Pas de vsync cfr ici: on garde l'audio source sans lui imposer un recalage video.
         "-c:v",
         "libx264",
         "-preset",

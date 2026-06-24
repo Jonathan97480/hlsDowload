@@ -56,7 +56,8 @@ function analyzePlaylist(lines) {
     const spreadThreshold = targetDuration ? Math.max(0.75, targetDuration * 0.35) : 1.5;
     const hasVariableDurations = durationStats.spread > spreadThreshold;
     const requiresAggressiveAudioSync = hasDiscontinuity;
-    const isLikelyUnstable = hasDiscontinuity || hasVariableDurations;
+    // Certaines playlists horodatees derivent meme en VOD une fois remuxe/concatenees.
+    const isLikelyUnstable = hasDiscontinuity || hasVariableDurations || hasProgramDateTime;
     const isLiveLike = playlistType === "live" || playlistType === "event";
 
     return {

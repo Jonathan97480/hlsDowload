@@ -101,15 +101,38 @@ function runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, c
             .then(() => ({ mode, effectiveAudioStrategy: buildEffectiveAudioStrategy(mode, syncProfile) }));
     };
 
-    const promise = (preferAudioCopy
-        ? runAttempt("transcode-copy-audio", "[ffmpeg] Tentative 2: transcode video + copie audio...")
-            .catch((error) => {
-                if (cancelledRef.cancelled || error.message === "Telechargement annule") throw createCancelledError();
-                console.log(`[ffmpeg] Copie audio impossible: ${error.message}`);
-                removeOutputIfExists(outputPath);
-                return runAttempt("transcode", "[ffmpeg] Tentative 3: transcode complet avec profil audio tres doux...");
-            })
-        : runAttempt("transcode", "[ffmpeg] Tentative 2: pipeline FFmpeg classique en mode transcode profil tres doux..."));
+    // On privilegie le transcode audio complet sur les flux HLS sensibles au drift.
+    const attempts = preferAudioCopy
+        ? [
+            {
+                mode: "transcode-copy-audio",
+                logMessage: "[ffmpeg] Tentative 2: transcode video + copie audio..."
+            },
+            {
+                mode: "transcode",
+                logMessage: "[ffmpeg] Tentative 3: transcode complet avec profil audio tres doux...",
+                failureLabel: "Copie audio impossible"
+            }
+        ]
+        : [
+            {
+                mode: "transcode",
+                logMessage: "[ffmpeg] Tentative 2: transcode complet avec profil audio tres doux..."
+            },
+            {
+                mode: "transcode-copy-audio",
+                logMessage: "[ffmpeg] Tentative 3: transcode video + copie audio...",
+                failureLabel: "Transcode audio complet impossible"
+            }
+        ];
+
+    const promise = attempts.reduce((chain, attempt, index) => chain.catch((error) => {
+        if (index === 0) throw error;
+        if (cancelledRef.cancelled || error.message === "Telechargement annule") throw createCancelledError();
+        console.log(`[ffmpeg] ${attempt.failureLabel || "Tentative precedente en echec"}: ${error.message}`);
+        removeOutputIfExists(outputPath);
+        return runAttempt(attempt.mode, attempt.logMessage);
+    }), runAttempt(attempts[0].mode, attempts[0].logMessage));
 
     return {
         promise,
@@ -257,26 +280,46 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
             if (qualityInfo.playlistAnalysis) console.log(`[ffmpeg] Analyse selection: ${JSON.stringify(qualityInfo.playlistAnalysis)}`);
 
             if (qualityInfo.isLiveLike) {
+                // Les playlists live/event sont plus sujettes aux horodatages instables.
                 const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef, {
                     syncProfile: "aggressive",
+                    preferAudioCopy: false,
                     logMessage: `[ffmpeg] Pipeline segments ignore: playlist ${qualityInfo.playlistType} detectee, bascule vers FFmpeg classique...`
                 });
                 currentTask = fallback;
-                return fallback.promise.then(() => ({ outputFileName, outputPath, quality, mode: "transcode", effectiveAudioStrategy: buildEffectiveAudioStrategy("transcode", "aggressive") }));
+                return fallback.promise.then((fallbackResult) => ({
+                    outputFileName,
+                    outputPath,
+                    quality,
+                    mode: fallbackResult?.mode || "transcode",
+                    effectiveAudioStrategy: fallbackResult?.effectiveAudioStrategy || buildEffectiveAudioStrategy("transcode", "aggressive")
+                }));
             }
 
             if (qualityInfo.playlistAnalysis?.recommendedConcatMode === "transcode") {
-                console.log("[ffmpeg] Pipeline segments ignore: VOD instable detectee, test FFmpeg direct avec copie audio prioritaire.");
-                const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef);
+                // Evite la concat segments quand l'analyse detecte un VOD potentiellement instable.
+                console.log("[ffmpeg] Pipeline segments ignore: VOD instable detectee, test FFmpeg direct avec transcode audio prioritaire.");
+                const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef, {
+                    preferAudioCopy: false
+                });
                 currentTask = fallback;
                 return fallback.promise.then((fallbackResult) => ({ outputFileName, outputPath, quality, mode: fallbackResult?.mode || "transcode", effectiveAudioStrategy: fallbackResult?.effectiveAudioStrategy || "" }));
             }
 
             if (skipSegmentPipeline) {
+                // Les masters avec audio separee restent plus fiables en traitement direct FFmpeg.
                 console.log("[ffmpeg] Pipeline segments ignore: audio HLS separee detectee.");
-                const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef);
+                const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef, {
+                    preferAudioCopy: false
+                });
                 currentTask = fallback;
-                return fallback.promise.then(() => ({ outputFileName, outputPath, quality, mode: "transcode", effectiveAudioStrategy: buildEffectiveAudioStrategy("transcode-copy-audio", "soft") }));
+                return fallback.promise.then((fallbackResult) => ({
+                    outputFileName,
+                    outputPath,
+                    quality,
+                    mode: fallbackResult?.mode || "transcode",
+                    effectiveAudioStrategy: fallbackResult?.effectiveAudioStrategy || ""
+                }));
             }
 
             console.log("[ffmpeg] Tentative 1: pipeline segments HLS...");
@@ -293,7 +336,9 @@ function createHlsDownloadTask(sourceUrl, headers = {}, hooks = {}, options = {}
                 .catch((segmentError) => {
                     if (cancelled || segmentError.message === "Telechargement annule") throw createCancelledError();
                     console.log(`[ffmpeg] Pipeline segments indisponible: ${segmentError.message}`);
-                    const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef);
+                    const fallback = runValidatedFfmpegFallback(finalUrl, inputOptions, outputPath, hooks, cancelledRef, {
+                        preferAudioCopy: false
+                    });
                     currentTask = fallback;
                     return fallback.promise
                         .then((fallbackResult) => {
