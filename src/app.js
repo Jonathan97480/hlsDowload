@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const path = require("path");
 const express = require("express");
+const packageInfo = require("../package.json");
 const downloadRouter = require("./routes/download");
 const adminRouter = require("./routes/admin");
 const { applyCors } = require("./middleware/cors.middleware");
@@ -32,6 +33,7 @@ app.get("/admin", (_req, res) => {
 app.get("/api/health", (_req, res) => {
     res.status(200).json({
         ok: true,
+        version: packageInfo.version,
         timestamp: new Date().toISOString()
     });
 });
