@@ -6,7 +6,8 @@
     "type": "commonjs",
     "scripts": {
         "start": "node src/app.js",
-        "dev": "nodemon src/app.js"
+        "dev": "nodemon src/app.js",
+        "reset-admin": "node reset-admin.js"
     },
     "dependencies": {
         "better-sqlite3": "^11.8.1",

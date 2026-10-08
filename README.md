@@ -59,7 +59,7 @@ Exemple:
 
 ```env
 PORT=3000
-API_KEY=change-moi
+API_KEY=125456Aprt
 FFMPEG_PATH=
 YT_DLP_PATH=
 DISK_MIN_FREE_PERCENT=5
@@ -420,7 +420,13 @@ Reponse:
 ## Interface admin
 
 - URL: `http://localhost:3000/admin`
-- 1ere connexion: utiliser le mot de passe bootstrap puis creer le compte admin definitif
+- Identifiants par defaut: `admin` / `admin123`
+- Reinitialisation du compte administrateur en ligne de commande:
+  ```bash
+  npm run reset-admin [username] [password]
+  # Exemple:
+  npm run reset-admin admin monMotDePasse123
+  ```
 - Le dashboard consomme un flux SSE (`/api/admin/dashboard/stream`)
 - Le stockage admin/session/settings/jobs/historique est dans SQLite (`data/app.db`)
 
